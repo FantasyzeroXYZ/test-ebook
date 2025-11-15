@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>完整 EPUB 阅读器</title>
+  <!-- 使用可用的 CDN 链接 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.88/dist/epub.min.js"></script>
+  <style>
+    :root {
+      --primary-color: #4a6fa5;
+      --bg-color: #f8f9fa;
+      --text-color: #333;
+      --card-bg: #ffffff;
+      --border-color: #e1e5e9;
+      --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    [data-theme="dark"] {
+      --primary-color: #6d9ed3;
+      --bg-color: #1a1d24;
+      --text-color: #e6eef8;
+      --card-bg: #2d333c;
+      --border-color: #3a4250;
+      --shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      line-height: 1.6;
+      transition: background-color 0.3s, color 0.3s;
+      overflow-x: hidden;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    header {
+      background-color: var(--card-bg);
+      padding: 1.5rem 0;
+      box-shadow: var(--shadow);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-icon {
+      font-size: 1.8rem;
+      color: var(--primary-color);
+    }
+
+    .logo h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+    }
+
+    .controls {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+
+    .btn {
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+      transform: translateY(-2px);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-outline {
+      background-color: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-color);
+    }
+
+    .btn-icon {
+      font-size: 1.2rem;
+    }
+
+    .file-input-wrapper {
+      position: relative;
+      overflow: hidden;
+      display: inline-block;
+    }
+
+    .file-input-wrapper input[type="file"] {
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+    }
+
+    main {
+      display: flex;
+      min-height: calc(100vh - 120px);
+    }
+
+    .sidebar {
+      width: 280px;
+      background-color: var(--card-bg);
+      padding: 20px;
+      border-right: 1px solid var(--border-color);
+      overflow-y: auto;
+      transition: transform 0.3s;
+    }
+
+    .book-info {
+      text-align: center;
+      margin-bottom: 25px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .book-cover {
+      width: 150px;
+      height: 200px;
+      background-color: var(--border-color);
+      margin: 0 auto 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .book-cover img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: cover;
+    }
+
+    .book-cover-placeholder {
+      font-size: 3rem;
+      color: var(--primary-color);
+    }
+
+    .book-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+
+    .book-author {
+      color: #888;
+      font-size: 0.9rem;
+    }
+
+    .sidebar-section {
+      margin-bottom: 25px;
+    }
+
+    .sidebar-section h3 {
+      font-size: 1rem;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .toc-list {
+      list-style: none;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .toc-item {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border-color);
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+
+    .toc-item:hover {
+      color: var(--primary-color);
+    }
+
+    .settings-option {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .settings-option label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+    }
+
+    select {
+      width: 100%;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+      background-color: var(--card-bg);
+      color: var(--text-color);
+    }
+
+    .viewer-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .viewer-controls {
+      display: flex;
+      justify-content: space-between;
+      padding: 15px 20px;
+      background-color: var(--card-bg);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .viewer-nav {
+      display: flex;
+      gap: 10px;
+    }
+
+    .progress-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.9rem;
+    }
+
+    .progress-bar {
+      width: 200px;
+      height: 6px;
+      background-color: var(--border-color);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background-color: var(--primary-color);
+      width: 0%;
+      transition: width 0.3s;
+    }
+
+    #viewer {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+      background-color: var(--card-bg);
+    }
+
+    #viewer .epub-container {
+      width: 100%;
+      height: 100%;
+      background: white;
+    }
+
+    [data-theme="dark"] #viewer .epub-container {
+      background: #2d333c;
+    }
+
+    .viewer-content {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: var(--card-bg);
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+      padding: 40px;
+      min-height: 100%;
+    }
+
+    .welcome-screen {
+      text-align: center;
+      padding: 60px 20px;
+    }
+
+    .welcome-icon {
+      font-size: 4rem;
+      color: var(--primary-color);
+      margin-bottom: 20px;
+    }
+
+    .welcome-screen h2 {
+      margin-bottom: 15px;
+    }
+
+    .welcome-screen p {
+      margin-bottom: 30px;
+      color: #888;
+      max-width: 500px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .mobile-toggle {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 101;
+      background-color: var(--primary-color);
+      color: white;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      box-shadow: var(--shadow);
+    }
+
+    .loading {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 1.2rem;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .loading.active {
+      display: flex;
+    }
+
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 5px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .error-message {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--card-bg);
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      text-align: center;
+      z-index: 1001;
+      max-width: 400px;
+      width: 90%;
+    }
+
+    .error-message.active {
+      display: block;
+    }
+
+    .error-icon {
+      font-size: 3rem;
+      margin-bottom: 15px;
+      color: #e74c3c;
+    }
+
+    @media (max-width: 768px) {
+      main {
+        flex-direction: column;
+      }
+      
+      .sidebar {
+        width: 100%;
+        position: fixed;
+        height: 100%;
+        z-index: 99;
+        transform: translateX(-100%);
+      }
+      
+      .sidebar.active {
+        transform: translateX(0);
+      }
+      
+      .mobile-toggle {
+        display: flex;
+      }
+      
+      .viewer-controls {
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      
+      .progress-info {
+        order: 3;
+        width: 100%;
+        justify-content: center;
+        margin-top: 10px;
+      }
+    }
+  </style>
+</head>
+<body data-theme="light">
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>正在加载 EPUB 文件...</div>
+  </div>
+  
+  <div class="error-message" id="error-message">
+    <div class="error-icon">⚠️</div>
+    <h3>加载失败</h3>
+    <p id="error-text">无法加载 EPUB 文件</p>
+    <button class="btn" style="margin-top: 15px;" onclick="hideError()">
+      确定
+    </button>
+  </div>
+  
+  <header>
+    <div class="container">
+      <div class="header-content">
+        <div class="logo">
+          <div class="logo-icon">📖</div>
+          <h1>EPUB 阅读器</h1>
+        </div>
+        <div class="controls">
+          <div class="file-input-wrapper">
+            <button class="btn" id="file-btn">
+              <span class="btn-icon">📂</span>
+              打开 EPUB
+            </button>
+            <input type="file" id="file-input" accept=".epub" />
+          </div>
+          <button id="theme-toggle" class="btn btn-outline">
+            <span class="btn-icon">🌙</span>
+            主题
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="sidebar">
+      <div class="book-info">
+        <div class="book-cover">
+          <div class="book-cover-placeholder">📚</div>
+        </div>
+        <div class="book-title">请选择 EPUB 文件</div>
+        <div class="book-author">作者信息将显示在这里</div>
+      </div>
+      
+      <div class="sidebar-section">
+        <h3><span class="btn-icon">📑</span> 目录</h3>
+        <ul class="toc-list" id="toc">
+          <li class="toc-item">请先选择 EPUB 文件</li>
+        </ul>
+      </div>
+      
+      <div class="sidebar-section">
+        <h3><span class="btn-icon">⚙️</span> 阅读设置</h3>
+        <div class="settings-option">
+          <label for="fontsize">
+            <span class="btn-icon">🔤</span>
+            字体大小
+          </label>
+          <span id="fontsize-value">16px</span>
+        </div>
+        <input type="range" id="fontsize" min="12" max="28" value="16">
+        
+        <div class="settings-option">
+          <label for="lineheight">
+            <span class="btn-icon">↕️</span>
+            行高
+          </label>
+          <span id="lineheight-value">1.5</span>
+        </div>
+        <input type="range" id="lineheight" min="1" max="2" step="0.1" value="1.5">
+        
+        <div class="settings-option">
+          <label for="fontfamily">
+            <span class="btn-icon">🖋️</span>
+            字体
+          </label>
+        </div>
+        <select id="fontfamily">
+          <option value="'Segoe UI', Tahoma, Geneva, Verdana, sans-serif">默认字体</option>
+          <option value="'Times New Roman', Times, serif">Times New Roman</option>
+          <option value="Arial, Helvetica, sans-serif">Arial</option>
+          <option value="'Courier New', Courier, monospace">Courier New</option>
+        </select>
+      </div>
+    </div>
+    
+    <div class="viewer-container">
+      <div class="viewer-controls">
+        <div class="viewer-nav">
+          <button id="prev" class="btn btn-outline" disabled>
+            <span class="btn-icon">◀</span>
+            上一页
+          </button>
+          <button id="next" class="btn btn-outline" disabled>
+            下一页
+            <span class="btn-icon">▶</span>
+          </button>
+        </div>
+        
+        <div class="progress-info">
+          <span id="page-info">0 / 0</span>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <span id="progress-percent">0%</span>
+        </div>
+      </div>
+      
+      <div id="viewer">
+        <div class="viewer-content" id="welcome-content">
+          <div class="welcome-screen">
+            <div class="welcome-icon">📚</div>
+            <h2>欢迎使用 EPUB 阅读器</h2>
+            <p>这是一个功能完整的 EPUB 电子书阅读器，支持自定义字体、字号、行高和主题切换。请点击上方按钮选择 EPUB 文件开始阅读。</p>
+            <div class="file-input-wrapper">
+              <button class="btn" style="padding: 12px 24px;">
+                <span class="btn-icon">📂</span>
+                选择 EPUB 文件
+              </button>
+              <input type="file" id="file-input-welcome" accept=".epub" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="mobile-toggle" id="sidebar-toggle">
+      <span>☰</span>
+    </div>
+  </main>
+
+  <script>
+    // 检查必要的库是否加载成功
+    function checkLibrariesLoaded() {
+      const errors = [];
+      
+      if (typeof JSZip === 'undefined') {
+        errors.push('JSZip 库未正确加载');
+      }
+      
+      if (typeof ePub === 'undefined') {
+        errors.push('EPUB 库未正确加载');
+      }
+      
+      if (errors.length > 0) {
+        showError('必要的库加载失败：' + errors.join('，') + '。请刷新页面重试。');
+        return false;
+      }
+      
+      return true;
+    }
+
+    let book, rendition;
+    let currentLocation = null;
+    let isBookLoaded = false;
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', function() {
+      // 检查库是否加载
+      if (!checkLibrariesLoaded()) {
+        return;
+      }
+
+      console.log('所有必要的库已加载成功');
+      
+      // 文件输入事件
+      document.getElementById('file-input').addEventListener('change', handleFileSelect);
+      document.getElementById('file-input-welcome').addEventListener('change', handleFileSelect);
+      
+      // 控制按钮事件
+      document.getElementById('prev').addEventListener('click', () => {
+        if (rendition && isBookLoaded) {
+          rendition.prev().catch(handleNavigationError);
+        }
+      });
+      
+      document.getElementById('next').addEventListener('click', () => {
+        if (rendition && isBookLoaded) {
+          rendition.next().catch(handleNavigationError);
+        }
+      });
+      
+      document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+      document.getElementById('sidebar-toggle').addEventListener('click', toggleSidebar);
+      
+      // 设置变化事件
+      document.getElementById('fontsize').addEventListener('input', updateFontSize);
+      document.getElementById('lineheight').addEventListener('input', updateLineHeight);
+      document.getElementById('fontfamily').addEventListener('change', updateFontFamily);
+      
+      // 恢复设置
+      restoreSettings();
+    });
+
+    // 处理导航错误
+    function handleNavigationError(error) {
+      console.log('导航错误:', error);
+      // 忽略章节查找错误，这是正常的边界情况
+      if (error.message && error.message.includes('No Section Found')) {
+        return;
+      }
+      showError('翻页失败: ' + error.message);
+    }
+
+    // 显示错误信息
+    function showError(message) {
+      const errorText = document.getElementById('error-text');
+      const errorMessage = document.getElementById('error-message');
+      
+      if (errorText && errorMessage) {
+        errorText.textContent = message;
+        errorMessage.classList.add('active');
+      } else {
+        alert(message);
+      }
+    }
+
+    // 隐藏错误信息
+    function hideError() {
+      const errorMessage = document.getElementById('error-message');
+      if (errorMessage) {
+        errorMessage.classList.remove('active');
+      }
+    }
+
+    // 安全地隐藏元素
+    function safeHideElement(selector) {
+      try {
+        const element = document.querySelector(selector);
+        if (element) {
+          element.classList.add('hidden');
+        }
+      } catch (error) {
+        console.log('隐藏元素时出错:', error);
+      }
+    }
+
+    // 处理文件选择
+    async function handleFileSelect(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      // 检查文件类型
+      if (!file.name.toLowerCase().endsWith('.epub')) {
+        showError('请选择有效的 EPUB 文件');
+        return;
+      }
+      
+      // 显示加载状态
+      const loading = document.getElementById('loading');
+      if (loading) loading.classList.add('active');
+      
+      try {
+        // 重置状态
+        isBookLoaded = false;
+        
+        // 显示加载状态
+        const bookTitle = document.querySelector('.book-title');
+        const bookAuthor = document.querySelector('.book-author');
+        if (bookTitle) bookTitle.textContent = '加载中...';
+        if (bookAuthor) bookAuthor.textContent = '';
+        
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // 创建新的 EPUB 实例
+        book = ePub(arrayBuffer);
+        
+        // 等待书籍加载完成
+        await book.ready;
+        
+        // 获取书籍元数据
+        const metadata = book.packaging.metadata;
+        
+        // 更新书籍信息
+        if (bookTitle) bookTitle.textContent = metadata.title || '未知标题';
+        if (bookAuthor) bookAuthor.textContent = metadata.creator || '未知作者';
+        
+        // 尝试获取封面
+        try {
+          const coverUrl = await book.coverUrl();
+          const bookCover = document.querySelector('.book-cover');
+          if (coverUrl && bookCover) {
+            bookCover.innerHTML = `<img src="${coverUrl}" alt="封面">`;
+          }
+        } catch (err) {
+          console.log('无法加载封面，使用默认图标');
+        }
+        
+        // 初始化阅读器
+        await initReader();
+        
+        // 生成目录
+        await generateTOC();
+        
+        // 安全地隐藏欢迎界面
+        safeHideElement('#welcome-content');
+        
+        isBookLoaded = true;
+        
+      } catch (error) {
+        console.error('加载 EPUB 文件时出错:', error);
+        showError('无法加载该 EPUB 文件：' + (error.message || '未知错误'));
+      } finally {
+        // 隐藏加载状态
+        if (loading) loading.classList.remove('active');
+      }
+    }
+
+    // 初始化阅读器
+    async function initReader() {
+      // 如果已有阅读器实例，先销毁
+      if (rendition) {
+        try {
+          rendition.destroy();
+        } catch (e) {
+          console.log('销毁旧阅读器时出错:', e);
+        }
+      }
+      
+      // 清除之前的阅读器内容
+      const viewer = document.getElementById('viewer');
+      if (viewer) {
+        viewer.innerHTML = '';
+      }
+      
+      try {
+        // 创建新的阅读器实例 - 使用滚动模式避免章节问题
+        rendition = book.renderTo(viewer, {
+          width: "100%",
+          height: "100%",
+          manager: "default",
+          flow: "scrolled", // 使用滚动模式而不是分页
+          spread: "none" // 禁用双页展开
+        });
+        
+        // 应用当前设置
+        applySettings();
+        
+        // 等待书籍位置加载
+        await book.locations.generate(1024); // 生成位置信息
+        
+        // 恢复阅读位置
+        const lastPos = localStorage.getItem('epub_pos');
+        if (lastPos) {
+          try {
+            await rendition.display(lastPos);
+          } catch (e) {
+            console.log('恢复位置失败，从开始阅读');
+            await rendition.display();
+          }
+        } else {
+          await rendition.display();
+        }
+        
+        // 监听位置变化
+        rendition.on('relocated', function(location) {
+          currentLocation = location;
+          savePosition();
+          updateProgress();
+          updateNavigationButtons();
+        });
+        
+        rendition.on('rendered', function(section) {
+          currentLocation = section;
+          savePosition();
+          updateProgress();
+          updateNavigationButtons();
+        });
+        
+        // 监听显示错误
+        rendition.on('displayError', function(error) {
+          console.log('显示错误:', error);
+          // 忽略章节未找到的错误
+          if (error.message && error.message.includes('No Section Found')) {
+            return;
+          }
+          showError('显示内容时出错: ' + error.message);
+        });
+        
+        // 初始化按钮状态
+        updateNavigationButtons();
+        
+      } catch (error) {
+        console.error('初始化阅读器时出错:', error);
+        showError('初始化阅读器失败：' + error.message);
+      }
+    }
+
+    // 更新导航按钮状态
+    function updateNavigationButtons() {
+      const prevBtn = document.getElementById('prev');
+      const nextBtn = document.getElementById('next');
+      
+      if (rendition && isBookLoaded) {
+        if (prevBtn) prevBtn.disabled = false;
+        if (nextBtn) nextBtn.disabled = false;
+      }
+    }
+
+    // 应用设置
+    function applySettings() {
+      if (!rendition) return;
+      
+      const fontSize = document.getElementById('fontsize').value + 'px';
+      const lineHeight = document.getElementById('lineheight').value;
+      const fontFamily = document.getElementById('fontfamily').value;
+      
+      try {
+        rendition.themes.default({
+          'body': {
+            'font-size': fontSize,
+            'line-height': lineHeight,
+            'font-family': fontFamily,
+            'color': 'var(--text-color)',
+            'background-color': 'var(--card-bg)',
+            'margin': '0',
+            'padding': '20px'
+          },
+          'p': {
+            'margin-bottom': '1em',
+            'text-align': 'justify'
+          },
+          'h1, h2, h3, h4, h5, h6': {
+            'margin-top': '1.5em',
+            'margin-bottom': '0.5em'
+          },
+          'a': {
+            'color': 'var(--primary-color)'
+          }
+        });
+        
+        // 更新显示值
+        const fontSizeValue = document.getElementById('fontsize-value');
+        const lineHeightValue = document.getElementById('lineheight-value');
+        if (fontSizeValue) fontSizeValue.textContent = fontSize;
+        if (lineHeightValue) lineHeightValue.textContent = lineHeight;
+      } catch (error) {
+        console.log('应用设置时出错:', error);
+      }
+    }
+
+    // 生成目录
+    async function generateTOC() {
+      try {
+        const toc = book.navigation.toc;
+        const tocList = document.getElementById('toc');
+        
+        if (!tocList) return;
+        
+        tocList.innerHTML = '';
+        
+        if (toc && toc.length > 0) {
+          toc.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'toc-item';
+            li.textContent = item.label;
+            li.addEventListener('click', async () => {
+              if (rendition) {
+                try {
+                  await rendition.display(item.href);
+                  // 在移动端点击目录后自动关闭侧边栏
+                  if (window.innerWidth <= 768) {
+                    const sidebar = document.querySelector('.sidebar');
+                    if (sidebar) sidebar.classList.remove('active');
+                  }
+                } catch (error) {
+                  console.log('跳转章节失败:', error);
+                  // 忽略章节未找到的错误
+                  if (!error.message.includes('No Section Found')) {
+                    showError('跳转章节失败: ' + error.message);
+                  }
+                }
+              }
+            });
+            tocList.appendChild(li);
+          });
+        } else {
+          const li = document.createElement('li');
+          li.className = 'toc-item';
+          li.textContent = '本书没有目录';
+          tocList.appendChild(li);
+        }
+      } catch (error) {
+        console.log('生成目录时出错:', error);
+        const tocList = document.getElementById('toc');
+        if (tocList) {
+          tocList.innerHTML = '<li class="toc-item">目录加载失败</li>';
+        }
+      }
+    }
+
+    // 保存阅读位置
+    function savePosition() {
+      if (!book || !rendition) return;
+      
+      try {
+        if (currentLocation && currentLocation.start) {
+          const cfi = currentLocation.start.cfi;
+          localStorage.setItem('epub_pos', cfi);
+        }
+      } catch (error) {
+        console.log('保存位置失败:', error);
+      }
+    }
+
+    // 更新阅读进度
+    function updateProgress() {
+      if (!book || !rendition) return;
+      
+      try {
+        if (book.locations && currentLocation && currentLocation.start) {
+          const percentage = book.locations.percentageFromCfi(currentLocation.start.cfi);
+          const progressPercent = Math.round(percentage * 100);
+          
+          const progressPercentEl = document.getElementById('progress-percent');
+          const progressFill = document.getElementById('progress-fill');
+          const pageInfo = document.getElementById('page-info');
+          
+          if (progressPercentEl) progressPercentEl.textContent = `${progressPercent}%`;
+          if (progressFill) progressFill.style.width = `${progressPercent}%`;
+          
+          // 更新页面信息
+          if (book.locations && book.locations.total && pageInfo) {
+            const currentPage = Math.round(book.locations.total * percentage);
+            pageInfo.textContent = `${currentPage} / ${book.locations.total}`;
+          }
+        }
+      } catch (error) {
+        console.log('进度计算错误:', error);
+      }
+    }
+
+    // 更新字体大小
+    function updateFontSize() {
+      applySettings();
+      saveSettings();
+    }
+
+    // 更新行高
+    function updateLineHeight() {
+      applySettings();
+      saveSettings();
+    }
+
+    // 更新字体
+    function updateFontFamily() {
+      applySettings();
+      saveSettings();
+    }
+
+    // 切换主题
+    function toggleTheme() {
+      const body = document.body;
+      const currentTheme = body.getAttribute('data-theme');
+      const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+      
+      body.setAttribute('data-theme', newTheme);
+      localStorage.setItem('epub_theme', newTheme);
+      
+      // 更新主题图标
+      const themeIcon = document.querySelector('#theme-toggle .btn-icon');
+      if (themeIcon) {
+        themeIcon.textContent = newTheme === 'light' ? '🌙' : '☀️';
+      }
+      
+      // 重新应用设置以更新阅读器颜色
+      applySettings();
+    }
+
+    // 切换侧边栏（移动端）
+    function toggleSidebar() {
+      const sidebar = document.querySelector('.sidebar');
+      if (sidebar) {
+        sidebar.classList.toggle('active');
+      }
+    }
+
+    // 保存设置
+    function saveSettings() {
+      const settings = {
+        fontSize: document.getElementById('fontsize').value,
+        lineHeight: document.getElementById('lineheight').value,
+        fontFamily: document.getElementById('fontfamily').value
+      };
+      
+      localStorage.setItem('epub_settings', JSON.stringify(settings));
+    }
+
+    // 恢复设置
+    function restoreSettings() {
+      // 恢复主题
+      const savedTheme = localStorage.getItem('epub_theme');
+      if (savedTheme) {
+        document.body.setAttribute('data-theme', savedTheme);
+        const themeIcon = document.querySelector('#theme-toggle .btn-icon');
+        if (themeIcon) {
+          themeIcon.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+        }
+      }
+      
+      // 恢复阅读设置
+      const savedSettings = localStorage.getItem('epub_settings');
+      if (savedSettings) {
+        try {
+          const settings = JSON.parse(savedSettings);
+          const fontSize = document.getElementById('fontsize');
+          const lineHeight = document.getElementById('lineheight');
+          const fontFamily = document.getElementById('fontfamily');
+          
+          if (fontSize) fontSize.value = settings.fontSize;
+          if (lineHeight) lineHeight.value = settings.lineHeight;
+          if (fontFamily) fontFamily.value = settings.fontFamily;
+          
+          applySettings();
+        } catch (error) {
+          console.log('恢复设置时出错:', error);
+        }
+      }
+    }
+  </script>
+</body>
+</html>
