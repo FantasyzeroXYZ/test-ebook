@@ -199,6 +199,7 @@
                     </div>
                 </div>
                 
+                <!-- 在Anki设置部分添加加载状态提示 -->
                 <div class="setting-group">
                     <div class="setting-group-header" data-group="anki">
                         <h3>📚 Anki设置</h3>
@@ -229,6 +230,7 @@
                                 <select class="select-control" id="ankiDeck">
                                     <option value="">选择牌组</option>
                                 </select>
+                                <span class="loading-text" id="deckLoading" style="display: none; font-size: 0.8rem; color: #666;">加载中...</span>
                             </div>
                         </div>
                         <div class="setting-item">
@@ -237,6 +239,7 @@
                                 <select class="select-control" id="ankiModel">
                                     <option value="">选择模板</option>
                                 </select>
+                                <span class="loading-text" id="modelLoading" style="display: none; font-size: 0.8rem; color: #666;">加载中...</span>
                             </div>
                         </div>
                         <div class="setting-item">

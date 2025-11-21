@@ -270,15 +270,16 @@ class EPUBReader {
         this.ankiPort.value = this.ankiSettings.port;
         this.ankiDeck.value = this.ankiSettings.deck;
         this.ankiModel.value = this.ankiSettings.model;
-        this.ankiWordField.value = this.ankiSettings.wordField;
-        this.ankiMeaningField.value = this.ankiSettings.meaningField;
-        this.ankiSentenceField.value = this.ankiSettings.sentenceField;
-        this.ankiAudioField.value = this.ankiSettings.audioField;
-        this.ankiTagsField.value = this.ankiSettings.tagsField;
         
-        // 如果已设置连接信息，测试连接并加载牌组和模板
+        // 如果已设置连接信息，自动测试连接并加载数据
         if (this.ankiSettings.host && this.ankiSettings.port) {
-            this.loadAnkiDecks();
+            // 延迟执行，确保UI先加载完成
+            setTimeout(() => {
+                this.testAnkiConnection().then(() => {
+                    // 连接成功后恢复字段选择
+                    this.restoreFieldSelections();
+                });
+            }, 1000);
         }
     }
 
@@ -305,7 +306,8 @@ class EPUBReader {
             const result = await this.ankiRequest('version', {});
             if (result) {
                 this.showToast(`Anki连接成功，版本: ${result}`);
-                this.loadAnkiDecks();
+                // 连接成功后自动加载牌组
+                await this.loadAnkiDecks();
             }
         } catch (error) {
             this.showToast('Anki连接失败，请检查AnkiConnect插件');
@@ -316,6 +318,8 @@ class EPUBReader {
     async loadAnkiDecks() {
         try {
             const decks = await this.ankiRequest('deckNames', {});
+            console.log('加载到的牌组:', decks);
+            
             this.ankiDeck.innerHTML = '<option value="">选择牌组</option>';
             decks.forEach(deck => {
                 const option = document.createElement('option');
@@ -324,18 +328,31 @@ class EPUBReader {
                 this.ankiDeck.appendChild(option);
             });
             
+            // 如果有保存的牌组设置，自动选择
             if (this.ankiSettings.deck) {
                 this.ankiDeck.value = this.ankiSettings.deck;
-                this.loadAnkiModels();
             }
+            
+            // 牌组选择变化时加载模板
+            this.ankiDeck.addEventListener('change', () => {
+                if (this.ankiDeck.value) {
+                    this.loadAnkiModels();
+                } else {
+                    this.clearAnkiModelAndFields();
+                }
+            });
+            
         } catch (error) {
             console.error('加载牌组失败:', error);
+            this.showToast('加载牌组失败');
         }
     }
 
     async loadAnkiModels() {
         try {
             const models = await this.ankiRequest('modelNames', {});
+            console.log('加载到的模板:', models);
+            
             this.ankiModel.innerHTML = '<option value="">选择模板</option>';
             models.forEach(model => {
                 const option = document.createElement('option');
@@ -344,73 +361,144 @@ class EPUBReader {
                 this.ankiModel.appendChild(option);
             });
             
+            // 如果有保存的模板设置，自动选择
             if (this.ankiSettings.model) {
                 this.ankiModel.value = this.ankiSettings.model;
-                this.loadAnkiFields();
             }
+            
+            // 模板选择变化时加载字段
+            this.ankiModel.addEventListener('change', () => {
+                if (this.ankiModel.value) {
+                    this.loadAnkiFields();
+                } else {
+                    this.clearAnkiFields();
+                }
+            });
+            
+            // 如果当前已选择模板，立即加载字段
+            if (this.ankiModel.value) {
+                await this.loadAnkiFields();
+            }
+            
         } catch (error) {
             console.error('加载模板失败:', error);
+            this.showToast('加载模板失败');
         }
     }
 
     async loadAnkiFields() {
         try {
-            const fields = await this.ankiRequest('modelFieldNames', { modelName: this.ankiModel.value });
+            if (!this.ankiModel.value) {
+                this.clearAnkiFields();
+                return;
+            }
             
-            // 清空字段选择框
-            this.ankiWordField.innerHTML = '<option value="">选择字段</option>';
-            this.ankiMeaningField.innerHTML = '<option value="">选择字段</option>';
-            this.ankiSentenceField.innerHTML = '<option value="">选择字段</option>';
-            this.ankiAudioField.innerHTML = '<option value="">选择字段</option>';
-            this.ankiTagsField.innerHTML = '<option value="">选择字段</option>';
-            
-            // 填充字段选择框
-            fields.forEach(field => {
-                const option = document.createElement('option');
-                option.value = field;
-                option.textContent = field;
-                
-                this.ankiWordField.appendChild(option.cloneNode(true));
-                this.ankiMeaningField.appendChild(option.cloneNode(true));
-                this.ankiSentenceField.appendChild(option.cloneNode(true));
-                this.ankiAudioField.appendChild(option.cloneNode(true));
-                this.ankiTagsField.appendChild(option.cloneNode(true));
+            const fields = await this.ankiRequest('modelFieldNames', { 
+                modelName: this.ankiModel.value 
             });
             
-            // 恢复保存的设置
-            if (this.ankiSettings.wordField) this.ankiWordField.value = this.ankiSettings.wordField;
-            if (this.ankiSettings.meaningField) this.ankiMeaningField.value = this.ankiSettings.meaningField;
-            if (this.ankiSettings.sentenceField) this.ankiSentenceField.value = this.ankiSettings.sentenceField;
-            if (this.ankiSettings.audioField) this.ankiAudioField.value = this.ankiSettings.audioField;
-            if (this.ankiSettings.tagsField) this.ankiTagsField.value = this.ankiSettings.tagsField;
+            console.log('加载到的字段:', fields);
+            
+            this.clearAnkiFields();
+            
+            // 为所有字段选择框填充选项
+            fields.forEach(field => {
+                this.addFieldOption(this.ankiWordField, field);
+                this.addFieldOption(this.ankiMeaningField, field);
+                this.addFieldOption(this.ankiSentenceField, field);
+                this.addFieldOption(this.ankiAudioField, field);
+                this.addFieldOption(this.ankiTagsField, field);
+            });
+            
+            // 恢复保存的字段设置
+            this.restoreFieldSelections();
             
         } catch (error) {
             console.error('加载字段失败:', error);
+            this.showToast('加载字段失败');
+            this.clearAnkiFields();
+        }
+    }
+
+    // 辅助方法：添加字段选项
+    addFieldOption(selectElement, fieldName) {
+        const option = document.createElement('option');
+        option.value = fieldName;
+        option.textContent = fieldName;
+        selectElement.appendChild(option);
+    }
+
+    // 辅助方法：清空模板和字段
+    clearAnkiModelAndFields() {
+        this.ankiModel.innerHTML = '<option value="">选择模板</option>';
+        this.clearAnkiFields();
+    }
+
+    // 辅助方法：清空所有字段选择框
+    clearAnkiFields() {
+        const fields = [
+            this.ankiWordField,
+            this.ankiMeaningField,
+            this.ankiSentenceField,
+            this.ankiAudioField,
+            this.ankiTagsField
+        ];
+        
+        fields.forEach(field => {
+            field.innerHTML = '<option value="">选择字段</option>';
+        });
+    }
+
+    // 辅助方法：恢复字段选择
+    restoreFieldSelections() {
+        if (this.ankiSettings.wordField) {
+            this.ankiWordField.value = this.ankiSettings.wordField;
+        }
+        if (this.ankiSettings.meaningField) {
+            this.ankiMeaningField.value = this.ankiSettings.meaningField;
+        }
+        if (this.ankiSettings.sentenceField) {
+            this.ankiSentenceField.value = this.ankiSettings.sentenceField;
+        }
+        if (this.ankiSettings.audioField) {
+            this.ankiAudioField.value = this.ankiSettings.audioField;
+        }
+        if (this.ankiSettings.tagsField) {
+            this.ankiTagsField.value = this.ankiSettings.tagsField;
         }
     }
 
     async ankiRequest(action, params) {
         const url = `http://${this.ankiSettings.host}:${this.ankiSettings.port}`;
         
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                action: action,
-                version: 6,
-                params: params
-            })
-        });
-        
-        const result = await response.json();
-        
-        if (result.error) {
-            throw new Error(result.error);
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    action: action,
+                    version: 6,
+                    params: params
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.error) {
+                throw new Error(result.error);
+            }
+            
+            return result.result;
+        } catch (error) {
+            console.error('Anki请求失败:', error);
+            throw new Error(`Anki请求失败: ${error.message}`);
         }
-        
-        return result.result;
     }
 
     async addToAnki() {
