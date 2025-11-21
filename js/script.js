@@ -25,6 +25,18 @@ class EPUBReader {
         this.selectedText = '';
         this.selectionTimeout = null;
         this.touchStartTime = 0;
+        this.currentWordData = null;
+        this.ankiSettings = {
+            host: '127.0.0.1',
+            port: 8765,
+            deck: '',
+            model: '',
+            wordField: '',
+            meaningField: '',
+            sentenceField: '',
+            audioField: '',
+            tagsField: ''
+        };
         
         this.initializeUI();
     }
@@ -44,7 +56,6 @@ class EPUBReader {
         this.totalPagesSpan = document.getElementById('totalPages');
         this.prevPageBtn = document.getElementById('prevPage');
         this.nextPageBtn = document.getElementById('nextPage');
-        this.toggleAudioBtn = document.getElementById('toggleAudio');
         this.uploadBtn = document.getElementById('uploadBtn');
         this.playerContainer = document.getElementById('playerContainer');
         this.playPauseBtn = document.getElementById('playPauseBtn');
@@ -54,18 +65,48 @@ class EPUBReader {
         this.durationSpan = document.getElementById('duration');
         this.playbackRateSelect = document.getElementById('playbackRate');
         this.swipeContainer = document.getElementById('swipeContainer');
-        this.viewModeButtons = document.querySelectorAll('.view-mode-btn');
         
         // 边缘点击区域
         this.leftEdgeTapArea = document.getElementById('leftEdgeTapArea');
         this.rightEdgeTapArea = document.getElementById('rightEdgeTapArea');
         
+        // 设置相关元素
+        this.toggleSettingsBtn = document.getElementById('toggleSettings');
+        this.settingsSidebar = document.getElementById('settingsSidebar');
+        this.closeSettingsBtn = document.getElementById('closeSettings');
+        
+        // 设置控件
+        this.viewModeSelect = document.getElementById('viewMode');
+        this.autoScroll = document.getElementById('autoScroll');
+        this.fontSize = document.getElementById('fontSize');
+        this.theme = document.getElementById('theme');
+        this.autoPlay = document.getElementById('autoPlay');
+        this.speechRate = document.getElementById('speechRate');
+        this.offlineMode = document.getElementById('offlineMode');
+        this.syncProgress = document.getElementById('syncProgress');
+        this.exportDataBtn = document.getElementById('exportData');
+        this.clearDataBtn = document.getElementById('clearData');
+        
+        // Anki设置控件
+        this.testAnkiConnectionBtn = document.getElementById('testAnkiConnection');
+        this.ankiHost = document.getElementById('ankiHost');
+        this.ankiPort = document.getElementById('ankiPort');
+        this.ankiDeck = document.getElementById('ankiDeck');
+        this.ankiModel = document.getElementById('ankiModel');
+        this.ankiWordField = document.getElementById('ankiWordField');
+        this.ankiMeaningField = document.getElementById('ankiMeaningField');
+        this.ankiSentenceField = document.getElementById('ankiSentenceField');
+        this.ankiAudioField = document.getElementById('ankiAudioField');
+        this.ankiTagsField = document.getElementById('ankiTagsField');
+        this.saveAnkiSettingsBtn = document.getElementById('saveAnkiSettings');
+        
         // 查词相关元素
-        this.dictionaryButton = document.getElementById('dictionaryButton');
         this.dictionaryModal = document.getElementById('dictionaryModal');
         this.dictionaryOverlay = document.getElementById('dictionaryOverlay');
         this.closeModalBtn = document.getElementById('closeModal');
         this.dictionaryContent = document.getElementById('dictionaryContent');
+        this.dictionaryFooter = document.getElementById('dictionaryFooter');
+        this.addToAnkiBtn = document.getElementById('addToAnkiBtn');
 
         this.selectionToolbar = document.getElementById('selectionToolbar');
         this.lookupWordBtn = document.getElementById('lookupWordBtn');
@@ -74,6 +115,9 @@ class EPUBReader {
         this.shareBtn = document.getElementById('shareBtn');
         
         this.bindEvents();
+        this.loadSettings();
+        this.loadAnkiSettings();
+        this.initializeSettingGroups();
     }
     
     bindEvents() {
@@ -82,8 +126,36 @@ class EPUBReader {
         this.closeSidebarBtn.addEventListener('click', () => this.toggleSidebar());
         this.prevPageBtn.addEventListener('click', () => this.prevPage());
         this.nextPageBtn.addEventListener('click', () => this.nextPage());
-        this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.uploadBtn.addEventListener('click', () => this.fileInput.click());
+        
+        // 设置按钮事件
+        this.toggleSettingsBtn.addEventListener('click', () => this.toggleSettings());
+        this.closeSettingsBtn.addEventListener('click', () => this.toggleSettings());
+        
+        // 设置控件事件
+        this.viewModeSelect.addEventListener('change', (e) => {
+            this.switchViewMode(e.target.value);
+            this.saveSettings();
+        });
+        this.autoScroll.addEventListener('change', () => this.saveSettings());
+        this.fontSize.addEventListener('change', () => {
+            this.saveSettings();
+            this.applyFontSize();
+        });
+        this.theme.addEventListener('change', () => {
+            this.saveSettings();
+            this.applyTheme();
+        });
+        this.autoPlay.addEventListener('change', () => this.saveSettings());
+        this.speechRate.addEventListener('change', () => this.saveSettings());
+        this.offlineMode.addEventListener('change', () => this.saveSettings());
+        this.syncProgress.addEventListener('change', () => this.saveSettings());
+        this.exportDataBtn.addEventListener('click', () => this.exportData());
+        this.clearDataBtn.addEventListener('click', () => this.clearData());
+        
+        // Anki设置事件
+        this.testAnkiConnectionBtn.addEventListener('click', () => this.testAnkiConnection());
+        this.saveAnkiSettingsBtn.addEventListener('click', () => this.saveAnkiSettings());
         
         // 上传区域事件
         this.uploadArea.addEventListener('click', () => this.fileInput.click());
@@ -101,14 +173,7 @@ class EPUBReader {
         // 查词相关事件
         this.closeModalBtn.addEventListener('click', () => this.hideDictionaryModal());
         this.dictionaryOverlay.addEventListener('click', () => this.hideDictionaryModal());
-        
-        // 阅读模式切换事件
-        this.viewModeButtons.forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const mode = e.target.dataset.mode;
-                this.switchViewMode(mode);
-            });
-        });
+        this.addToAnkiBtn.addEventListener('click', () => this.addToAnki());
 
         // 工具栏按钮事件
         this.lookupWordBtn.addEventListener('click', () => this.lookupWord());
@@ -137,6 +202,352 @@ class EPUBReader {
                 this.loadEPUB(files[0]);
             }
         });
+    }
+
+    // 初始化设置分组折叠功能
+    initializeSettingGroups() {
+        const groupHeaders = document.querySelectorAll('.setting-group-header');
+        groupHeaders.forEach(header => {
+            header.addEventListener('click', () => {
+                header.classList.toggle('collapsed');
+            });
+            // 默认全部折叠
+            header.classList.add('collapsed');
+        });
+    }
+
+    // 设置相关方法
+    toggleSettings() {
+        this.settingsSidebar.classList.toggle('open');
+        
+        // 如果打开设置，关闭目录
+        if (this.settingsSidebar.classList.contains('open')) {
+            this.sidebar.classList.remove('open');
+        }
+    }
+
+    loadSettings() {
+        const settings = JSON.parse(localStorage.getItem('epubReaderSettings') || '{}');
+        
+        // 应用设置到控件
+        this.viewModeSelect.value = settings.viewMode || 'scroll';
+        this.autoScroll.checked = settings.autoScroll || false;
+        this.fontSize.value = settings.fontSize || 'medium';
+        this.theme.value = settings.theme || 'light';
+        this.autoPlay.checked = settings.autoPlay !== false; // 默认开启
+        this.speechRate.value = settings.speechRate || '1';
+        this.offlineMode.checked = settings.offlineMode || false;
+        this.syncProgress.checked = settings.syncProgress !== false; // 默认开启
+        
+        // 应用设置到界面
+        this.applyFontSize();
+        this.applyTheme();
+        this.switchViewMode(this.viewModeSelect.value);
+    }
+
+    saveSettings() {
+        const settings = {
+            viewMode: this.viewModeSelect.value,
+            autoScroll: this.autoScroll.checked,
+            fontSize: this.fontSize.value,
+            theme: this.theme.value,
+            autoPlay: this.autoPlay.checked,
+            speechRate: this.speechRate.value,
+            offlineMode: this.offlineMode.checked,
+            syncProgress: this.syncProgress.checked
+        };
+        
+        localStorage.setItem('epubReaderSettings', JSON.stringify(settings));
+    }
+
+    // Anki设置相关方法
+    loadAnkiSettings() {
+        const settings = JSON.parse(localStorage.getItem('epubReaderAnkiSettings') || '{}');
+        this.ankiSettings = { ...this.ankiSettings, ...settings };
+        
+        // 应用到控件
+        this.ankiHost.value = this.ankiSettings.host;
+        this.ankiPort.value = this.ankiSettings.port;
+        this.ankiDeck.value = this.ankiSettings.deck;
+        this.ankiModel.value = this.ankiSettings.model;
+        this.ankiWordField.value = this.ankiSettings.wordField;
+        this.ankiMeaningField.value = this.ankiSettings.meaningField;
+        this.ankiSentenceField.value = this.ankiSettings.sentenceField;
+        this.ankiAudioField.value = this.ankiSettings.audioField;
+        this.ankiTagsField.value = this.ankiSettings.tagsField;
+        
+        // 如果已设置连接信息，测试连接并加载牌组和模板
+        if (this.ankiSettings.host && this.ankiSettings.port) {
+            this.loadAnkiDecks();
+        }
+    }
+
+    saveAnkiSettings() {
+        this.ankiSettings = {
+            host: this.ankiHost.value,
+            port: parseInt(this.ankiPort.value),
+            deck: this.ankiDeck.value,
+            model: this.ankiModel.value,
+            wordField: this.ankiWordField.value,
+            meaningField: this.ankiMeaningField.value,
+            sentenceField: this.ankiSentenceField.value,
+            audioField: this.ankiAudioField.value,
+            tagsField: this.ankiTagsField.value
+        };
+        
+        localStorage.setItem('epubReaderAnkiSettings', JSON.stringify(this.ankiSettings));
+        this.showToast('Anki设置已保存');
+    }
+
+    async testAnkiConnection() {
+        try {
+            this.showToast('正在测试Anki连接...');
+            const result = await this.ankiRequest('version', {});
+            if (result) {
+                this.showToast(`Anki连接成功，版本: ${result}`);
+                this.loadAnkiDecks();
+            }
+        } catch (error) {
+            this.showToast('Anki连接失败，请检查AnkiConnect插件');
+            console.error('Anki连接错误:', error);
+        }
+    }
+
+    async loadAnkiDecks() {
+        try {
+            const decks = await this.ankiRequest('deckNames', {});
+            this.ankiDeck.innerHTML = '<option value="">选择牌组</option>';
+            decks.forEach(deck => {
+                const option = document.createElement('option');
+                option.value = deck;
+                option.textContent = deck;
+                this.ankiDeck.appendChild(option);
+            });
+            
+            if (this.ankiSettings.deck) {
+                this.ankiDeck.value = this.ankiSettings.deck;
+                this.loadAnkiModels();
+            }
+        } catch (error) {
+            console.error('加载牌组失败:', error);
+        }
+    }
+
+    async loadAnkiModels() {
+        try {
+            const models = await this.ankiRequest('modelNames', {});
+            this.ankiModel.innerHTML = '<option value="">选择模板</option>';
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model;
+                option.textContent = model;
+                this.ankiModel.appendChild(option);
+            });
+            
+            if (this.ankiSettings.model) {
+                this.ankiModel.value = this.ankiSettings.model;
+                this.loadAnkiFields();
+            }
+        } catch (error) {
+            console.error('加载模板失败:', error);
+        }
+    }
+
+    async loadAnkiFields() {
+        try {
+            const fields = await this.ankiRequest('modelFieldNames', { modelName: this.ankiModel.value });
+            
+            // 清空字段选择框
+            this.ankiWordField.innerHTML = '<option value="">选择字段</option>';
+            this.ankiMeaningField.innerHTML = '<option value="">选择字段</option>';
+            this.ankiSentenceField.innerHTML = '<option value="">选择字段</option>';
+            this.ankiAudioField.innerHTML = '<option value="">选择字段</option>';
+            this.ankiTagsField.innerHTML = '<option value="">选择字段</option>';
+            
+            // 填充字段选择框
+            fields.forEach(field => {
+                const option = document.createElement('option');
+                option.value = field;
+                option.textContent = field;
+                
+                this.ankiWordField.appendChild(option.cloneNode(true));
+                this.ankiMeaningField.appendChild(option.cloneNode(true));
+                this.ankiSentenceField.appendChild(option.cloneNode(true));
+                this.ankiAudioField.appendChild(option.cloneNode(true));
+                this.ankiTagsField.appendChild(option.cloneNode(true));
+            });
+            
+            // 恢复保存的设置
+            if (this.ankiSettings.wordField) this.ankiWordField.value = this.ankiSettings.wordField;
+            if (this.ankiSettings.meaningField) this.ankiMeaningField.value = this.ankiSettings.meaningField;
+            if (this.ankiSettings.sentenceField) this.ankiSentenceField.value = this.ankiSettings.sentenceField;
+            if (this.ankiSettings.audioField) this.ankiAudioField.value = this.ankiSettings.audioField;
+            if (this.ankiSettings.tagsField) this.ankiTagsField.value = this.ankiSettings.tagsField;
+            
+        } catch (error) {
+            console.error('加载字段失败:', error);
+        }
+    }
+
+    async ankiRequest(action, params) {
+        const url = `http://${this.ankiSettings.host}:${this.ankiSettings.port}`;
+        
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                action: action,
+                version: 6,
+                params: params
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.error) {
+            throw new Error(result.error);
+        }
+        
+        return result.result;
+    }
+
+    async addToAnki() {
+        if (!this.currentWordData || !this.selectedText) {
+            this.showToast('没有可添加的单词数据');
+            return;
+        }
+
+        if (!this.ankiSettings.deck || !this.ankiSettings.model) {
+            this.showToast('请先配置Anki牌组和模板');
+            return;
+        }
+
+        try {
+            // 构建笔记数据
+            const fields = {};
+            
+            if (this.ankiSettings.wordField) {
+                fields[this.ankiSettings.wordField] = this.selectedText;
+            }
+            
+            if (this.ankiSettings.meaningField && this.currentWordData.meanings) {
+                const meaning = this.currentWordData.meanings[0];
+                if (meaning) {
+                    fields[this.ankiSettings.meaningField] = meaning.definitions[0]?.definition || '';
+                }
+            }
+            
+            if (this.ankiSettings.sentenceField) {
+                // 这里可以获取当前句子，简化实现使用选中文本
+                fields[this.ankiSettings.sentenceField] = this.selectedText;
+            }
+            
+            if (this.ankiSettings.tagsField) {
+                fields[this.ankiSettings.tagsField] = 'epub-reader';
+            }
+            
+            const note = {
+                deckName: this.ankiSettings.deck,
+                modelName: this.ankiSettings.model,
+                fields: fields,
+                tags: ['epub-reader']
+            };
+            
+            const result = await this.ankiRequest('addNote', { note });
+            
+            if (result) {
+                this.showToast('单词已添加到Anki');
+                this.hideDictionaryModal();
+            } else {
+                this.showToast('添加失败，请检查字段映射');
+            }
+            
+        } catch (error) {
+            console.error('添加Anki笔记失败:', error);
+            this.showToast('添加失败: ' + error.message);
+        }
+    }
+
+    applyFontSize() {
+        const fontSize = this.fontSize.value;
+        const sizes = {
+            small: '0.9rem',
+            medium: '1.1rem',
+            large: '1.3rem',
+            xlarge: '1.5rem'
+        };
+        
+        document.documentElement.style.setProperty('--base-font-size', sizes[fontSize]);
+        
+        // 更新页面内容的字体大小
+        const pageContent = document.querySelector('.page-content');
+        if (pageContent) {
+            pageContent.style.fontSize = sizes[fontSize];
+        }
+    }
+
+    applyTheme() {
+        const theme = this.theme.value;
+        const themes = {
+            light: {
+                '--primary-color': '#3498db',
+                '--secondary-color': '#2c3e50',
+                '--background-color': '#f5f5f5',
+                '--text-color': '#333',
+                '--border-color': '#ddd'
+            },
+            dark: {
+                '--primary-color': '#3498db',
+                '--secondary-color': '#34495e',
+                '--background-color': '#1a1a1a',
+                '--text-color': '#ecf0f1',
+                '--border-color': '#34495e'
+            },
+            sepia: {
+                '--primary-color': '#d35400',
+                '--secondary-color': '#8b4513',
+                '--background-color': '#f4ecd8',
+                '--text-color': '#5c4b37',
+                '--border-color': '#d2b48c'
+            }
+        };
+        
+        const themeColors = themes[theme];
+        Object.keys(themeColors).forEach(key => {
+            document.documentElement.style.setProperty(key, themeColors[key]);
+        });
+    }
+
+    exportData() {
+        // 导出阅读数据
+        const readingData = {
+            currentBook: this.currentBook,
+            currentChapterIndex: this.currentChapterIndex,
+            settings: JSON.parse(localStorage.getItem('epubReaderSettings') || '{}')
+        };
+        
+        const dataStr = JSON.stringify(readingData, null, 2);
+        const dataBlob = new Blob([dataStr], {type: 'application/json'});
+        
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'epub-reader-data.json';
+        link.click();
+        
+        URL.revokeObjectURL(url);
+        this.showToast('数据导出成功');
+    }
+
+    clearData() {
+        if (confirm('确定要清除所有缓存数据吗？此操作不可撤销。')) {
+            localStorage.removeItem('epubReaderSettings');
+            // 可以添加更多清理逻辑
+            this.showToast('缓存数据已清除');
+            location.reload(); // 重新加载页面应用默认设置
+        }
     }
 
     // 文本选择事件绑定
@@ -280,18 +691,30 @@ class EPUBReader {
         let finalX = toolbarX - toolbarRect.width / 2;
         let finalY = toolbarY - toolbarRect.height - 10;
         
-        // 边界检查
+        // 边界检查 - 防止超出屏幕
         if (finalX < 10) finalX = 10;
         if (finalX + toolbarRect.width > viewportWidth - 10) {
             finalX = viewportWidth - toolbarRect.width - 10;
         }
-        if (finalY < 10) finalY = toolbarY + rect.height + 10;
         
+        // 如果上方空间不够，显示在选中文本下方
+        if (finalY < 10) {
+            finalY = toolbarY + rect.height + 10;
+        }
+        
+        // 确保工具栏不会超出屏幕底部
+        if (finalY + toolbarRect.height > viewportHeight - 10) {
+            finalY = viewportHeight - toolbarRect.height - 10;
+        }
+        
+        // 应用位置
         this.selectionToolbar.style.left = finalX + 'px';
         this.selectionToolbar.style.top = finalY + 'px';
+        this.selectionToolbar.style.transform = 'translateY(-110%)';
+        
         this.selectionToolbar.classList.add('show');
         
-        console.log('显示自定义工具栏，选中文本:', this.selectedText);
+        console.log('显示自定义工具栏，选中文本:', this.selectedText, '位置:', finalX, finalY);
         
         // 在安卓端，额外阻止默认行为
         if (/Android/i.test(navigator.userAgent)) {
@@ -402,15 +825,6 @@ class EPUBReader {
         if (this.viewMode === mode) return;
         
         this.viewMode = mode;
-        
-        // 更新按钮状态
-        this.viewModeButtons.forEach(btn => {
-            if (btn.dataset.mode === mode) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-        });
         
         // 重新加载当前章节
         if (this.currentChapterIndex !== undefined && this.chapters.length > 0) {
@@ -603,6 +1017,15 @@ class EPUBReader {
         this.currentSectionIndex = index;
         this.currentPageSpan.textContent = (index + 1).toString();
     }
+
+    toggleSidebar() {
+        this.sidebar.classList.toggle('open');
+        
+        // 如果打开目录，关闭设置
+        if (this.sidebar.classList.contains('open')) {
+            this.settingsSidebar.classList.remove('open');
+        }
+    }
     
     prevPage() {
         if (this.viewMode === 'scroll') {
@@ -650,6 +1073,7 @@ class EPUBReader {
         
         this.dictionaryModal.classList.add('show');
         this.dictionaryOverlay.classList.add('show');
+        this.dictionaryFooter.style.display = 'none';
         
         // 显示加载状态
         this.dictionaryContent.innerHTML = `
@@ -661,7 +1085,10 @@ class EPUBReader {
         
         // 查询词典
         this.fetchDictionaryData(this.selectedText)
-            .then(result => this.displayDictionaryResult(result))
+            .then(result => {
+                this.displayDictionaryResult(result);
+                this.dictionaryFooter.style.display = 'block';
+            })
             .catch(error => this.displayDictionaryError(error));
     }
     
@@ -692,6 +1119,8 @@ class EPUBReader {
         }
         
         const wordData = data[0];
+        this.currentWordData = wordData;
+        
         let html = `
             <div class="dictionary-result">
                 <div class="dictionary-word">${wordData.word}</div>
@@ -739,7 +1168,9 @@ class EPUBReader {
     hideDictionaryModal() {
         this.dictionaryModal.classList.remove('show');
         this.dictionaryOverlay.classList.remove('show');
+        this.dictionaryFooter.style.display = 'none';
         window.getSelection().removeAllRanges();
+        this.currentWordData = null;
     }
     
     async safePlayAudio(audio) {
@@ -760,10 +1191,6 @@ class EPUBReader {
         this.isPlaying = false;
         this.playPauseBtn.textContent = '▶';
         this.clearHighlights();
-    }
-    
-    toggleSidebar() {
-        this.sidebar.classList.toggle('open');
     }
     
     handleFileSelect(event) {
