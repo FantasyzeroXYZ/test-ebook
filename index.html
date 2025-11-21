@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>EPUB3 阅读器 - 左右滑动版</title>
+    <title>EPUB3 阅读器 - 增强版</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -23,7 +23,6 @@
         <div class="main-content">
             <div class="reader-header">
                 <div class="header-top-row">
-                    <!-- 统一的按钮组 -->
                     <div class="function-buttons">
                         <button class="btn" id="toggleSidebar">
                             <span>📖</span>
@@ -37,11 +36,18 @@
                             <span>📁</span>
                             <span>上传</span>
                         </button>
+                        <!-- 阅读模式切换 -->
+                        <div class="view-mode-container">
+                            <button class="view-mode-btn active" data-mode="scroll">滚动</button>
+                            <button class="view-mode-btn" data-mode="paged">分页</button>
+                        </div>
+                    </div>
+                    <div class="header-controls">
+                        <span class="page-indicator">第 <span id="currentPage">1</span> 页 / 共 <span id="totalPages">?</span> 页</span>
                     </div>
                 </div>
                 <div class="header-bottom-row">
                     <button class="btn btn-outline" id="prevPage">上一页</button>
-                    <span class="page-indicator">第 <span id="currentPage">1</span> 页 / 共 <span id="totalPages">?</span> 页</span>
                     <button class="btn btn-outline" id="nextPage">下一页</button>
                 </div>
             </div>
@@ -58,12 +64,14 @@
                 </div>
                 
                 <div class="swipe-container" id="swipeContainer" style="display: none;">
+                    <!-- 边缘点击区域 -->
+                    <div class="edge-tap-area left" id="leftEdgeTapArea"></div>
                     <div class="page-content" id="pageContent"></div>
+                    <div class="edge-tap-area right" id="rightEdgeTapArea"></div>
                 </div>
             </div>
 
-            <button class="dictionary-button" id="dictionaryButton">🔍 查词</button>
-
+            <!-- 词典模态框 -->
             <div class="dictionary-modal-overlay" id="dictionaryOverlay"></div>
             <div class="dictionary-modal" id="dictionaryModal">
                 <div class="dictionary-modal-header">
@@ -78,6 +86,7 @@
                 </div>
             </div>
 
+            <!-- 音频播放器 -->
             <div class="player-container" id="playerContainer" style="display: none;">
                 <div class="player-controls">
                     <button class="player-btn" id="playPauseBtn">▶</button>
@@ -99,6 +108,26 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- 自定义选择工具栏 -->
+    <div class="selection-toolbar" id="selectionToolbar">
+        <button class="selection-toolbar-btn" id="lookupWordBtn">
+            <span>🔍</span>
+            <span>查词</span>
+        </button>
+        <button class="selection-toolbar-btn outline" id="highlightBtn">
+            <span>⭐</span>
+            <span>高亮</span>
+        </button>
+        <button class="selection-toolbar-btn outline" id="copyBtn">
+            <span>📋</span>
+            <span>复制</span>
+        </button>
+        <button class="selection-toolbar-btn outline" id="shareBtn">
+            <span>↗</span>
+            <span>分享</span>
+        </button>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>

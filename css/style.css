@@ -160,6 +160,23 @@ body {
     align-items: center;
 }
 
+/* 阅读模式切换按钮 */
+.view-mode-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-color);
+}
+
+.view-mode-btn.active {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
 .reader-content {
     flex: 1;
     overflow: hidden;
@@ -179,7 +196,59 @@ body {
     touch-action: pan-y pinch-zoom;
 }
 
-.page-content {
+/* 边缘点击区域 */
+.edge-tap-area {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 60px;
+    z-index: 5;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+}
+
+.edge-tap-area.left {
+    left: 0;
+}
+
+.edge-tap-area.right {
+    right: 0;
+}
+
+.edge-tap-area:hover {
+    background-color: rgba(52, 152, 219, 0.1);
+}
+
+.edge-tap-area::after {
+    content: '';
+    width: 30px;
+    height: 30px;
+    border: solid var(--primary-color);
+    border-width: 0 3px 3px 0;
+    display: inline-block;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.edge-tap-area.left::after {
+    transform: rotate(135deg);
+    margin-left: 10px;
+}
+
+.edge-tap-area.right::after {
+    transform: rotate(-45deg);
+    margin-right: 10px;
+}
+
+.edge-tap-area:hover::after {
+    opacity: 1;
+}
+
+/* 滚动模式 */
+.page-content.scroll-mode {
     width: 100%;
     height: 100%;
     overflow-y: auto;
@@ -191,17 +260,70 @@ body {
     margin: 0;
 }
 
-.page-content h1, .page-content h2, .page-content h3 {
+/* 分页模式样式 */
+.page-content.paged-mode {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+}
+
+.paged-content {
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+.page-section {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 20px;
+    background: white;
+    display: none; /* 默认隐藏 */
+}
+
+.page-section.active {
+    display: block; /* 激活的页面显示 */
+    z-index: 1;
+}
+
+/* 确保分页内容也有正确的样式 */
+.page-section h1, .page-section h2, .page-section h3 {
     margin-bottom: 15px;
     color: var(--secondary-color);
 }
 
-.page-content p {
+.page-section p {
     margin-bottom: 15px;
     text-align: justify;
 }
 
-.page-content img {
+.page-section img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+}
+
+/* 滚动模式样式保持不变 */
+.page-content.scroll-mode h1, 
+.page-content.scroll-mode h2, 
+.page-content.scroll-mode h3 {
+    margin-bottom: 15px;
+    color: var(--secondary-color);
+}
+
+.page-content.scroll-mode p {
+    margin-bottom: 15px;
+    text-align: justify;
+}
+
+.page-content.scroll-mode img {
     max-width: 100%;
     height: auto;
     display: block;
@@ -239,6 +361,11 @@ body {
     font-weight: bold;
     opacity: 0;
     transition: opacity 0.3s ease;
+    /* 确保在移动端可点击 */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
 }
 
 .dictionary-button.show {
@@ -497,6 +624,129 @@ body {
     min-width: 120px;
 }
 
+/* === 修复：彻底禁用浏览器默认工具栏并启用自定义工具栏 === */
+
+/* 1. 全局禁用文本选择工具栏 */
+* {
+    -webkit-touch-callout: none !important; /* 禁用长按工具栏 */
+    -webkit-user-callout: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    user-select: none !important;
+}
+
+/* 2. 为阅读区域明确启用文本选择（使用更强的选择器） */
+.reader-content,
+.reader-content *,
+.page-content,
+.page-content *,
+.page-section,
+.page-section *,
+.swipe-container,
+.swipe-container *,
+.epub-content,
+.epub-content *,
+.paged-content,
+.paged-content *,
+[class*="page-"],
+[class*="content"] {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+    -webkit-touch-callout: default !important;
+}
+
+/* 3. 确保所有阅读相关的元素都能选择文本 */
+.page-content.scroll-mode,
+.page-content.scroll-mode *,
+.page-content.paged-mode,
+.page-content.paged-mode *,
+.paged-content,
+.paged-content *,
+.page-section,
+.page-section * {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+}
+
+/* 4. 针对移动端特殊处理 */
+@media (max-width: 768px) {
+    .reader-content,
+    .reader-content *,
+    .page-content,
+    .page-content *,
+    .page-section,
+    .page-section * {
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+        user-select: text !important;
+        -webkit-touch-callout: default !important;
+        -webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
+    }
+    
+    /* 移动端边缘点击区域更大 */
+    .edge-tap-area {
+        width: 80px;
+    }
+}
+
+/* 自定义选择工具栏 */
+.selection-toolbar {
+    position: fixed;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    transform: translateY(-100%);
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.selection-toolbar.show {
+    display: flex;
+    opacity: 1;
+    transform: translateY(-110%);
+}
+
+.selection-toolbar-btn {
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: background-color 0.2s;
+}
+
+.selection-toolbar-btn:hover {
+    background: #2980b9;
+}
+
+.selection-toolbar-btn.outline {
+    background: transparent;
+    border: 1px solid var(--primary-color);
+    color: var(--primary-color);
+}
+
+.selection-toolbar-btn.outline:hover {
+    background: #e6f7ff;
+}
+
 /* 响应式设计 - 移动端 */
 @media (max-width: 768px) {
     .container {
@@ -617,6 +867,23 @@ body {
     .page-indicator {
         font-size: 0.8rem;
         min-width: 100px;
+    }
+
+    .dictionary-button {
+        padding: 10px 18px;
+        font-size: 0.9rem;
+        min-height: 44px; /* 移动端最小触摸目标尺寸 */
+    }
+
+    .selection-toolbar {
+        padding: 6px;
+        gap: 6px;
+    }
+    
+    .selection-toolbar-btn {
+        padding: 10px 14px;
+        font-size: 0.9rem;
+        min-height: 44px;
     }
 }
 
@@ -740,4 +1007,60 @@ body {
 
 .function-buttons .btn span {
     display: inline;
+}
+
+/* 新增：选择工具栏定位优化 */
+.selection-toolbar {
+    max-width: 90vw;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+}
+
+.selection-toolbar-btn {
+    flex-shrink: 0;
+}
+
+/* 新增：移动端工具栏按钮文字隐藏优化 */
+@media (max-width: 480px) {
+    .function-buttons .btn span:last-child {
+        display: none !important;
+    }
+    
+    .function-buttons .btn {
+        padding: 8px;
+        min-width: 44px;
+        justify-content: center;
+    }
+    
+    .selection-toolbar-btn span:last-child {
+        display: none !important;
+    }
+    
+    .selection-toolbar-btn {
+        padding: 10px;
+        min-width: 44px;
+        justify-content: center;
+    }
+}
+
+/* 新增：阅读区域滚动优化 */
+.page-content.scroll-mode {
+    scroll-behavior: smooth;
+}
+
+.page-content.scroll-mode::-webkit-scrollbar {
+    width: 6px;
+}
+
+.page-content.scroll-mode::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.page-content.scroll-mode::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+.page-content.scroll-mode::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
 }

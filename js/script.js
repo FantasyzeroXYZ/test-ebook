@@ -11,16 +11,20 @@ class EPUBReader {
         this.zip = null;
         this.resourceMap = new Map();
         this.currentSMILData = [];
-        this.selectedText = '';
         this.dictionaryButton = null;
         this.dictionaryModal = null;
         this.lastSelectionTime = 0;
         this.isAudioReady = false;
         this.isSelecting = false;
-        this.touchStartX = 0;
-        this.touchStartY = 0;
-        this.swipeThreshold = 50;
         this.dictionaryButtonTimeout = null;
+        this.viewMode = 'scroll'; // 'scroll' 或 'paged'
+        this.currentSectionIndex = 0;
+        this.sections = [];
+        this.selectionToolbar = null;
+        this.lookupWordBtn = null;
+        this.selectedText = '';
+        this.selectionTimeout = null;
+        this.touchStartTime = 0;
         
         this.initializeUI();
     }
@@ -50,6 +54,11 @@ class EPUBReader {
         this.durationSpan = document.getElementById('duration');
         this.playbackRateSelect = document.getElementById('playbackRate');
         this.swipeContainer = document.getElementById('swipeContainer');
+        this.viewModeButtons = document.querySelectorAll('.view-mode-btn');
+        
+        // 边缘点击区域
+        this.leftEdgeTapArea = document.getElementById('leftEdgeTapArea');
+        this.rightEdgeTapArea = document.getElementById('rightEdgeTapArea');
         
         // 查词相关元素
         this.dictionaryButton = document.getElementById('dictionaryButton');
@@ -57,6 +66,12 @@ class EPUBReader {
         this.dictionaryOverlay = document.getElementById('dictionaryOverlay');
         this.closeModalBtn = document.getElementById('closeModal');
         this.dictionaryContent = document.getElementById('dictionaryContent');
+
+        this.selectionToolbar = document.getElementById('selectionToolbar');
+        this.lookupWordBtn = document.getElementById('lookupWordBtn');
+        this.highlightBtn = document.getElementById('highlightBtn');
+        this.copyBtn = document.getElementById('copyBtn');
+        this.shareBtn = document.getElementById('shareBtn');
         
         this.bindEvents();
     }
@@ -65,8 +80,8 @@ class EPUBReader {
         // 主要功能按钮事件
         this.toggleSidebarBtn.addEventListener('click', () => this.toggleSidebar());
         this.closeSidebarBtn.addEventListener('click', () => this.toggleSidebar());
-        this.prevPageBtn.addEventListener('click', () => this.prevChapter());
-        this.nextPageBtn.addEventListener('click', () => this.nextChapter());
+        this.prevPageBtn.addEventListener('click', () => this.prevPage());
+        this.nextPageBtn.addEventListener('click', () => this.nextPage());
         this.toggleAudioBtn.addEventListener('click', () => this.toggleAudio());
         this.uploadBtn.addEventListener('click', () => this.fileInput.click());
         
@@ -79,74 +94,30 @@ class EPUBReader {
         this.progressBar.addEventListener('click', (e) => this.seekAudio(e));
         this.playbackRateSelect.addEventListener('change', (e) => this.changePlaybackRate(e.target.value));
         
-        // 触摸滑动事件
-        this.swipeContainer.addEventListener('touchstart', (e) => this.handleTouchStart(e));
-        this.swipeContainer.addEventListener('touchend', (e) => this.handleTouchEnd(e));
-        
-        // 鼠标滑动事件（桌面端）
-        this.swipeContainer.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-        this.swipeContainer.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+        // 边缘点击翻页事件
+        this.leftEdgeTapArea.addEventListener('click', () => this.prevPage());
+        this.rightEdgeTapArea.addEventListener('click', () => this.nextPage());
         
         // 查词相关事件
-        this.dictionaryButton.addEventListener('click', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            this.showDictionaryModal();
-        });
         this.closeModalBtn.addEventListener('click', () => this.hideDictionaryModal());
         this.dictionaryOverlay.addEventListener('click', () => this.hideDictionaryModal());
         
-        // 文本选择事件
-        document.addEventListener('mousedown', (e) => {
-            if (e.target !== this.dictionaryButton && !this.dictionaryButton.contains(e.target)) {
-                this.isSelecting = true;
-                if (this.dictionaryButtonTimeout) {
-                    clearTimeout(this.dictionaryButtonTimeout);
-                    this.dictionaryButtonTimeout = null;
-                }
-            }
+        // 阅读模式切换事件
+        this.viewModeButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const mode = e.target.dataset.mode;
+                this.switchViewMode(mode);
+            });
         });
-        
-        document.addEventListener('mouseup', (e) => {
-            if (this.isSelecting) {
-                this.handleTextSelection(e);
-                this.isSelecting = false;
-            }
-        });
-        
-        // 触摸文本选择事件
-        document.addEventListener('touchstart', (e) => {
-            if (e.target !== this.dictionaryButton && !this.dictionaryButton.contains(e.target)) {
-                this.isSelecting = true;
-                if (this.dictionaryButtonTimeout) {
-                    clearTimeout(this.dictionaryButtonTimeout);
-                    this.dictionaryButtonTimeout = null;
-                }
-            }
-        });
-        
-        document.addEventListener('touchend', (e) => {
-            if (this.isSelecting) {
-                this.handleTextSelection(e);
-                this.isSelecting = false;
-            }
-        });
-        
-        // 点击页面其他地方隐藏查词按钮
-        document.addEventListener('click', (e) => {
-            if (e.target !== this.dictionaryButton && !this.dictionaryButton.contains(e.target)) {
-                this.dictionaryButtonTimeout = setTimeout(() => {
-                    this.hideDictionaryButton();
-                }, 3000);
-            }
-        });
-        
-        // 查词按钮本身的点击事件
-        this.dictionaryButton.addEventListener('click', () => {
-            if (this.dictionaryButtonTimeout) {
-                clearTimeout(this.dictionaryButtonTimeout);
-            }
-        });
+
+        // 工具栏按钮事件
+        this.lookupWordBtn.addEventListener('click', () => this.lookupWord());
+        this.highlightBtn.addEventListener('click', () => this.highlightText());
+        this.copyBtn.addEventListener('click', () => this.copyText());
+        this.shareBtn.addEventListener('click', () => this.shareText());
+
+        // 文本选择事件处理
+        this.bindSelectionEvents();
         
         // 拖拽上传事件
         this.uploadArea.addEventListener('dragover', (e) => {
@@ -167,125 +138,516 @@ class EPUBReader {
             }
         });
     }
-    
-    // 触摸事件处理
-    handleTouchStart(e) {
-        this.touchStartX = e.touches[0].clientX;
-        this.touchStartY = e.touches[0].clientY;
-    }
-    
-    handleTouchEnd(e) {
-        if (!this.touchStartX) return;
-        
-        const touchEndX = e.changedTouches[0].clientX;
-        const touchEndY = e.changedTouches[0].clientY;
-        
-        const diffX = this.touchStartX - touchEndX;
-        const diffY = this.touchStartY - touchEndY;
-        
-        // 只处理水平滑动，且垂直滑动距离较小
-        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > this.swipeThreshold) {
-            if (diffX > 0) {
-                this.nextChapter();
-            } else {
-                this.prevChapter();
+
+    // 文本选择事件绑定
+    bindSelectionEvents() {
+        // 点击页面其他地方隐藏工具栏
+        document.addEventListener('mousedown', (e) => {
+            if (!this.selectionToolbar.contains(e.target)) {
+                this.hideSelectionToolbar();
             }
-        }
+        });
         
-        this.touchStartX = 0;
-        this.touchStartY = 0;
-    }
-    
-    // 鼠标滑动事件处理
-    handleMouseDown(e) {
-        this.touchStartX = e.clientX;
-        this.touchStartY = e.clientY;
-    }
-    
-    handleMouseUp(e) {
-        if (!this.touchStartX) return;
-        
-        const diffX = this.touchStartX - e.clientX;
-        const diffY = this.touchStartY - e.clientY;
-        
-        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > this.swipeThreshold) {
-            if (diffX > 0) {
-                this.nextChapter();
-            } else {
-                this.prevChapter();
+        document.addEventListener('touchstart', (e) => {
+            if (!this.selectionToolbar.contains(e.target)) {
+                this.hideSelectionToolbar();
             }
+        });
+
+        // 文本选择变化事件
+        document.addEventListener('selectionchange', () => {
+            this.handleSelectionChange();
+        });
+
+        // 阻止阅读区域的长按默认行为
+        const preventContextMenu = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        };
+
+        // 为阅读区域添加事件监听器
+        this.readerContent = document.querySelector('.reader-content');
+        if (this.readerContent) {
+            this.readerContent.addEventListener('contextmenu', preventContextMenu);
+            this.readerContent.addEventListener('touchstart', (e) => {
+                // 标记触摸开始，用于后续处理
+                this.touchStartTime = Date.now();
+            });
+            
+            this.readerContent.addEventListener('touchend', (e) => {
+                // 处理长按后的选择
+                const touchDuration = Date.now() - this.touchStartTime;
+                if (touchDuration > 500) {
+                    setTimeout(() => {
+                        this.handleSelectionChange();
+                    }, 100);
+                }
+            });
         }
-        
-        this.touchStartX = 0;
-        this.touchStartY = 0;
+
+        // 全局阻止长按默认行为
+        document.addEventListener('contextmenu', (e) => {
+            // 只在阅读区域允许文本选择
+            if (e.target.closest('.reader-content') || 
+                e.target.closest('.page-content') ||
+                e.target.closest('.page-section')) {
+                // 在阅读区域内，允许选择但阻止默认工具栏
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+        });
+
+        // 触摸结束事件 - 用于移动端
+        document.addEventListener('touchend', (e) => {
+            // 延迟处理，确保文本选择完成
+            setTimeout(() => {
+                this.handleSelectionChange(e);
+            }, 100);
+        });
+
+        // 鼠标弹起事件 - 用于桌面端
+        document.addEventListener('mouseup', (e) => {
+            this.handleSelectionChange(e);
+        });
     }
-    
-    // 文本选择处理
-    handleTextSelection(e) {
+
+    // 选择变化处理方法
+    handleSelectionChange(e) {
         const selection = window.getSelection();
         const selectedText = selection.toString().trim();
         
-        console.log('选中的文本:', selectedText);
+        console.log('选中的文本:', selectedText, '长度:', selectedText.length);
         
-        // 防止快速连续触发
-        const now = Date.now();
-        if (now - this.lastSelectionTime < 100) return;
-        this.lastSelectionTime = now;
+        // 清除之前的定时器
+        if (this.selectionTimeout) {
+            clearTimeout(this.selectionTimeout);
+        }
         
         if (selectedText.length > 0 && selectedText.length < 100) {
             this.selectedText = selectedText;
-            this.showDictionaryButton(e);
+            
+            // 延迟显示工具栏，确保选择完成
+            this.selectionTimeout = setTimeout(() => {
+                this.showSelectionToolbar(selection);
+                
+                // 在安卓端，主动清除选择以防止原生工具栏出现
+                if (/Android/i.test(navigator.userAgent)) {
+                    setTimeout(() => {
+                        // 不清除选择，因为我们想要显示自定义工具栏
+                        // 但阻止默认行为
+                        if (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                    }, 50);
+                }
+            }, 150);
         } else {
-            this.hideDictionaryButton();
+            this.hideSelectionToolbar();
         }
     }
-    
-    showDictionaryButton(e) {
-        let clientX, clientY;
-        
-        if (e.type.includes('touch')) {
-            clientX = e.changedTouches[0].clientX;
-            clientY = e.changedTouches[0].clientY;
-        } else {
-            clientX = e.clientX;
-            clientY = e.clientY;
+
+    hideSelectionToolbar() {
+        this.selectionToolbar.classList.remove('show');
+        if (this.selectionTimeout) {
+            clearTimeout(this.selectionTimeout);
+            this.selectionTimeout = null;
         }
+    }
+
+    showSelectionToolbar(selection) {
+        if (!selection.rangeCount) return;
         
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        
+        if (rect.width === 0 && rect.height === 0) return;
+        
+        // 计算工具栏位置（在选择文本上方）
         const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
         const scrollY = window.pageYOffset || document.documentElement.scrollTop;
         
-        const buttonX = clientX + scrollX;
-        const buttonY = clientY + scrollY - 50;
+        const toolbarX = rect.left + rect.width / 2 + scrollX;
+        const toolbarY = rect.top + scrollY;
         
-        console.log('显示查词按钮位置:', buttonX, buttonY);
+        // 确保工具栏在可视区域内
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        const toolbarRect = this.selectionToolbar.getBoundingClientRect();
         
-        this.dictionaryButton.style.left = buttonX + 'px';
-        this.dictionaryButton.style.top = buttonY + 'px';
-        this.dictionaryButton.classList.add('show');
+        let finalX = toolbarX - toolbarRect.width / 2;
+        let finalY = toolbarY - toolbarRect.height - 10;
         
-        // 清除之前的定时器
-        if (this.dictionaryButtonTimeout) {
-            clearTimeout(this.dictionaryButtonTimeout);
+        // 边界检查
+        if (finalX < 10) finalX = 10;
+        if (finalX + toolbarRect.width > viewportWidth - 10) {
+            finalX = viewportWidth - toolbarRect.width - 10;
         }
+        if (finalY < 10) finalY = toolbarY + rect.height + 10;
         
-        // 设置新的定时器，3秒后隐藏
-        this.dictionaryButtonTimeout = setTimeout(() => {
-            this.hideDictionaryButton();
+        this.selectionToolbar.style.left = finalX + 'px';
+        this.selectionToolbar.style.top = finalY + 'px';
+        this.selectionToolbar.classList.add('show');
+        
+        console.log('显示自定义工具栏，选中文本:', this.selectedText);
+        
+        // 在安卓端，额外阻止默认行为
+        if (/Android/i.test(navigator.userAgent)) {
+            document.addEventListener('contextmenu', this.preventAndroidToolbar, { once: true });
+        }
+    }
+
+    // 专门阻止安卓工具栏的方法
+    preventAndroidToolbar(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+    }
+
+    // 工具栏按钮功能
+    lookupWord() {
+        if (!this.selectedText) return;
+        
+        this.hideSelectionToolbar();
+        this.showDictionaryModal();
+        
+        // 清除选择
+        window.getSelection().removeAllRanges();
+    }
+
+    highlightText() {
+        const selection = window.getSelection();
+        if (!selection.rangeCount) return;
+        
+        const range = selection.getRangeAt(0);
+        const span = document.createElement('span');
+        span.className = 'highlight';
+        span.style.backgroundColor = '#fff9c4';
+        
+        try {
+            range.surroundContents(span);
+            this.hideSelectionToolbar();
+            window.getSelection().removeAllRanges();
+            this.showToast('文本已高亮');
+        } catch (e) {
+            console.warn('无法高亮此选择:', e);
+            this.showToast('无法高亮此文本');
+        }
+    }
+
+    copyText() {
+        if (!this.selectedText) return;
+        
+        navigator.clipboard.writeText(this.selectedText).then(() => {
+            this.hideSelectionToolbar();
+            window.getSelection().removeAllRanges();
+            this.showToast('文本已复制到剪贴板');
+        }).catch(err => {
+            console.error('复制失败:', err);
+            // 降级方案
+            const textArea = document.createElement('textarea');
+            textArea.value = this.selectedText;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            this.showToast('文本已复制到剪贴板');
+        });
+    }
+
+    shareText() {
+        if (!this.selectedText) return;
+        
+        if (navigator.share) {
+            navigator.share({
+                title: '分享文本',
+                text: this.selectedText
+            }).then(() => {
+                this.hideSelectionToolbar();
+                window.getSelection().removeAllRanges();
+            }).catch(err => {
+                console.error('分享失败:', err);
+            });
+        } else {
+            // 降级处理
+            this.copyText();
+        }
+    }
+
+    showToast(message) {
+        const toast = document.createElement('div');
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            z-index: 10001;
+            font-size: 0.9rem;
+        `;
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            document.body.removeChild(toast);
         }, 3000);
     }
+
+    switchViewMode(mode) {
+        if (this.viewMode === mode) return;
+        
+        this.viewMode = mode;
+        
+        // 更新按钮状态
+        this.viewModeButtons.forEach(btn => {
+            if (btn.dataset.mode === mode) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        
+        // 重新加载当前章节
+        if (this.currentChapterIndex !== undefined && this.chapters.length > 0) {
+            this.loadChapter(this.currentChapterIndex);
+        }
+    }
+
+    loadChapter(index) {
+        if (index < 0 || index >= this.chapters.length) return;
+        
+        this.currentChapterIndex = index;
+        const chapter = this.chapters[index];
+        
+        if (this.viewMode === 'scroll') {
+            // 滚动模式 - 显示完整章节内容
+            this.pageContent.innerHTML = chapter.content;
+            this.pageContent.className = 'page-content scroll-mode';
+            this.currentPageSpan.textContent = (index + 1).toString();
+            this.totalPagesSpan.textContent = this.chapters.length;
+        } else {
+            // 分页模式 - 将章节内容分割成多个页面
+            this.splitChapterIntoPages(chapter.content);
+            this.pageContent.className = 'page-content paged-mode';
+            this.currentPageSpan.textContent = '1';
+            this.totalPagesSpan.textContent = this.sections.length;
+        }
+        
+        this.updateTOCHighlight();
+        
+        this.currentSMILData = chapter.audio ? chapter.audio.smilData || [] : [];
+        this.bindDoubleClickEvents();
+        
+        // 重新绑定选择事件到新内容
+        this.bindSelectionEventsToNewContent();
+        
+        if (chapter.audio && chapter.audio.src) {
+            this.prepareAudioPlayer(chapter);
+        } else {
+            this.playerContainer.style.display = 'none';
+        }
+        
+        this.pageContent.scrollTop = 0;
+    }
+
+    // 为新加载的内容绑定选择事件
+    bindSelectionEventsToNewContent() {
+        const contentElements = this.pageContent.querySelectorAll('p, span, div, li, h1, h2, h3, h4, h5, h6');
+        
+        contentElements.forEach(element => {
+            // 阻止长按默认行为
+            element.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            });
+            
+            // 触摸事件处理
+            element.addEventListener('touchstart', (e) => {
+                this.touchStartTime = Date.now();
+            });
+            
+            element.addEventListener('touchend', (e) => {
+                const touchDuration = Date.now() - this.touchStartTime;
+                if (touchDuration > 400) { // 长按
+                    setTimeout(() => {
+                        this.handleSelectionChange(e);
+                    }, 100);
+                }
+            });
+        });
+    }
+
+    splitChapterIntoPages(content) {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = content;
+        tempDiv.classList.add('epub-content');
+        
+        // 获取阅读区域尺寸
+        const container = this.pageContent;
+        const containerHeight = container.offsetHeight - 40; // 减去padding
+        const containerWidth = container.offsetWidth - 40;
+        
+        this.sections = [];
+        
+        // 简单分页：按段落分割
+        const elements = tempDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, blockquote, pre, ul, ol, li');
+        
+        if (elements.length === 0) {
+            // 如果没有找到段落元素，直接使用原始内容
+            this.sections.push(content);
+        } else {
+            let currentPage = [];
+            let currentHeight = 0;
+            
+            for (let element of elements) {
+                // 估算元素高度
+                const elementHeight = this.simpleEstimateHeight(element, containerWidth);
+                
+                // 如果当前页已经有内容且加上这个元素会超出，就创建新页
+                if (currentHeight > 0 && currentHeight + elementHeight > containerHeight) {
+                    this.sections.push(currentPage.map(el => el.outerHTML).join(''));
+                    currentPage = [];
+                    currentHeight = 0;
+                }
+                
+                currentPage.push(element.cloneNode(true));
+                currentHeight += elementHeight;
+                
+                // 如果单个元素就超过页面高度，强制分页
+                if (elementHeight > containerHeight && currentPage.length > 1) {
+                    const lastElement = currentPage.pop();
+                    this.sections.push(currentPage.map(el => el.outerHTML).join(''));
+                    currentPage = [lastElement];
+                    currentHeight = elementHeight;
+                }
+            }
+            
+            // 添加最后一页
+            if (currentPage.length > 0) {
+                this.sections.push(currentPage.map(el => el.outerHTML).join(''));
+            }
+        }
+        
+        // 如果分页失败，回退到单页显示
+        if (this.sections.length === 0) {
+            this.sections.push(content);
+        }
+        
+        console.log('分页结果:', this.sections.length, '页');
+        
+        // 显示分页内容
+        this.renderPagedContent();
+        this.currentSectionIndex = 0;
+        this.showSection(0);
+    }
+
+    simpleEstimateHeight(element, containerWidth) {
+        // 创建临时元素来测量高度
+        const temp = document.createElement('div');
+        temp.style.cssText = `
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            width: ${containerWidth}px;
+            padding: 20px;
+            font-size: 1.1rem;
+            line-height: 1.8;
+        `;
+        
+        const clone = element.cloneNode(true);
+        temp.appendChild(clone);
+        document.body.appendChild(temp);
+        
+        const height = temp.offsetHeight;
+        document.body.removeChild(temp);
+        
+        // 添加一些边距
+        return height + 20;
+    }
+
+    renderPagedContent() {
+        const pagedContainer = document.createElement('div');
+        pagedContainer.className = 'paged-content';
+        
+        this.sections.forEach((sectionHtml, index) => {
+            const section = document.createElement('div');
+            section.className = 'page-section';
+            section.innerHTML = sectionHtml;
+            section.style.display = index === 0 ? 'block' : 'none';
+            pagedContainer.appendChild(section);
+        });
+        
+        this.pageContent.innerHTML = '';
+        this.pageContent.appendChild(pagedContainer);
+        
+        console.log('渲染分页内容完成，共', this.sections.length, '页');
+    }
     
-    hideDictionaryButton() {
-        this.dictionaryButton.classList.remove('show');
-        if (this.dictionaryButtonTimeout) {
-            clearTimeout(this.dictionaryButtonTimeout);
-            this.dictionaryButtonTimeout = null;
+    showSection(index) {
+        const sections = this.pageContent.querySelectorAll('.page-section');
+        sections.forEach((section, i) => {
+            if (i === index) {
+                section.classList.add('active');
+                section.style.display = 'block';
+            } else {
+                section.classList.remove('active');
+                section.style.display = 'none';
+            }
+        });
+        this.currentSectionIndex = index;
+        this.currentPageSpan.textContent = (index + 1).toString();
+    }
+    
+    prevPage() {
+        if (this.viewMode === 'scroll') {
+            // 滚动模式 - 切换到上一章
+            if (this.currentChapterIndex > 0) {
+                this.stopAllAudio();
+                this.loadChapter(this.currentChapterIndex - 1);
+            }
+        } else {
+            // 分页模式 - 切换到上一页或上一章
+            if (this.currentSectionIndex > 0) {
+                this.showSection(this.currentSectionIndex - 1);
+            } else if (this.currentChapterIndex > 0) {
+                this.stopAllAudio();
+                this.loadChapter(this.currentChapterIndex - 1);
+            }
         }
     }
     
-    async showDictionaryModal() {
+    nextPage() {
+        if (this.viewMode === 'scroll') {
+            // 滚动模式 - 切换到下一章
+            if (this.currentChapterIndex < this.chapters.length - 1) {
+                this.stopAllAudio();
+                this.loadChapter(this.currentChapterIndex + 1);
+            }
+        } else {
+            // 分页模式 - 切换到下一页或下一章
+            if (this.currentSectionIndex < this.sections.length - 1) {
+                this.showSection(this.currentSectionIndex + 1);
+            } else if (this.currentChapterIndex < this.chapters.length - 1) {
+                this.stopAllAudio();
+                this.loadChapter(this.currentChapterIndex + 1);
+            }
+        }
+    }
+    
+    showDictionaryModal() {
         console.log('显示词典弹窗:', this.selectedText);
         
-        this.hideDictionaryButton();
+        this.hideSelectionToolbar();
+        
+        // 清除文本选择
+        window.getSelection().removeAllRanges();
+        
         this.dictionaryModal.classList.add('show');
         this.dictionaryOverlay.classList.add('show');
         
@@ -297,12 +659,10 @@ class EPUBReader {
             </div>
         `;
         
-        try {
-            const result = await this.fetchDictionaryData(this.selectedText);
-            this.displayDictionaryResult(result);
-        } catch (error) {
-            this.displayDictionaryError(error);
-        }
+        // 查询词典
+        this.fetchDictionaryData(this.selectedText)
+            .then(result => this.displayDictionaryResult(result))
+            .catch(error => this.displayDictionaryError(error));
     }
     
     async fetchDictionaryData(word) {
@@ -783,30 +1143,6 @@ class EPUBReader {
         });
     }
     
-    loadChapter(index) {
-        if (index < 0 || index >= this.chapters.length) return;
-        
-        this.currentChapterIndex = index;
-        const chapter = this.chapters[index];
-        
-        this.pageContent.innerHTML = chapter.content;
-        this.currentPageSpan.textContent = index + 1;
-        this.updateTOCHighlight();
-        
-        this.currentSMILData = chapter.audio ? chapter.audio.smilData || [] : [];
-        console.log('当前章节的SMIL数据:', this.currentSMILData);
-        
-        this.bindDoubleClickEvents();
-        
-        if (chapter.audio && chapter.audio.src) {
-            this.prepareAudioPlayer(chapter);
-        } else {
-            this.playerContainer.style.display = 'none';
-        }
-        
-        this.pageContent.scrollTop = 0;
-    }
-    
     bindDoubleClickEvents() {
         const oldElements = this.pageContent.querySelectorAll('[data-double-click]');
         oldElements.forEach(el => {
@@ -1025,6 +1361,7 @@ class EPUBReader {
     }
 }
 
+// 初始化阅读器
 document.addEventListener('DOMContentLoaded', () => {
     window.reader = new EPUBReader();
 });
