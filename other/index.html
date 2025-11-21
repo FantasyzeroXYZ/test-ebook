@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>epub阅读器-测试</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.88/dist/epub.min.js"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-theme="light">
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>正在加载 EPUB 文件...</div>
+  </div>
+  
+  <div class="error-message" id="error-message">
+    <div class="error-icon">⚠️</div>
+    <h3>加载失败</h3>
+    <p id="error-text">无法加载 EPUB 文件</p>
+    <button class="btn" style="margin-top: 15px;" onclick="hideError()">
+      确定
+    </button>
+  </div>
+  
+  <!-- 查词面板 -->
+  <div class="panel-overlay" id="panel-overlay"></div>
+  <div class="dictionary-panel" id="dictionary-panel">
+    <div class="dictionary-header">
+      <div class="dictionary-title">词典</div>
+      <button class="dictionary-close" id="dictionary-close">×</button>
+    </div>
+    <div class="dictionary-content">
+      <div class="dictionary-search">
+        <input type="text" id="panel-search-input" placeholder="输入要查询的单词...">
+        <button id="panel-search-btn">查询</button>
+      </div>
+      <div id="panel-dictionary-result">
+        <div class="dict-loading">请选择单词进行查询</div>
+      </div>
+    </div>
+  </div>
+  
+  <header>
+    <div class="container">
+      <div class="header-content">
+        <div class="logo">
+          <div class="logo-icon">📖</div>
+          <h1>EPUB 阅读器</h1>
+        </div>
+        <div class="controls">
+          <div class="file-input-wrapper">
+            <button class="btn" id="file-btn">
+              <span class="btn-icon">📂</span>
+              打开 EPUB
+            </button>
+            <input type="file" id="file-input" accept=".epub" />
+          </div>
+          <button id="theme-toggle" class="btn btn-outline">
+            <span class="btn-icon">🌙</span>
+            主题
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="sidebar">
+      <div class="book-info">
+        <div class="book-cover">
+          <div class="book-cover-placeholder">📚</div>
+        </div>
+        <div class="book-title">请选择 EPUB 文件</div>
+        <div class="book-author">作者信息将显示在这里</div>
+      </div>
+      
+      <div class="sidebar-section">
+        <h3><span class="btn-icon">📑</span> 目录</h3>
+        <ul class="toc-list" id="toc">
+          <li class="toc-item">请先选择 EPUB 文件</li>
+        </ul>
+      </div>
+      
+      <div class="sidebar-section">
+        <h3><span class="btn-icon">⚙️</span> 阅读设置</h3>
+        <div class="settings-option">
+          <label for="fontsize">
+            <span class="btn-icon">🔤</span>
+            字体大小
+          </label>
+          <span id="fontsize-value">16px</span>
+        </div>
+        <input type="range" id="fontsize" min="12" max="28" value="16">
+        
+        <div class="settings-option">
+          <label for="lineheight">
+            <span class="btn-icon">↕️</span>
+            行高
+          </label>
+          <span id="lineheight-value">1.5</span>
+        </div>
+        <input type="range" id="lineheight" min="1" max="2" step="0.1" value="1.5">
+        
+        <div class="settings-option">
+          <label for="fontfamily">
+            <span class="btn-icon">🖋️</span>
+            字体
+          </label>
+        </div>
+        <select id="fontfamily">
+          <option value="'Segoe UI', Tahoma, Geneva, Verdana, sans-serif">默认字体</option>
+          <option value="'Times New Roman', Times, serif">Times New Roman</option>
+          <option value="Arial, Helvetica, sans-serif">Arial</option>
+          <option value="'Courier New', Courier, monospace">Courier New</option>
+        </select>
+      </div>
+    </div>
+    
+    <div class="viewer-container">
+      <div class="viewer-controls">
+        <div class="viewer-nav">
+          <button id="prev" class="btn btn-outline" disabled>
+            <span class="btn-icon">◀</span>
+            上一页
+          </button>
+          <button id="next" class="btn btn-outline" disabled>
+            下一页
+            <span class="btn-icon">▶</span>
+          </button>
+        </div>
+        
+        <div class="progress-info">
+          <span id="page-info">0 / 0</span>
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <span id="progress-percent">0%</span>
+        </div>
+      </div>
+      
+      <div id="viewer">
+        <div class="viewer-content" id="welcome-content">
+          <div class="welcome-screen">
+            <div class="welcome-icon">📚</div>
+            <h2>欢迎使用 EPUB 阅读器</h2>
+            <p>这是一个功能完整的 EPUB 电子书阅读器，支持自定义字体、字号、行高和主题切换。请点击上方按钮选择 EPUB 文件开始阅读。</p>
+            <div class="file-input-wrapper">
+              <button class="btn" style="padding: 12px 24px;">
+                <span class="btn-icon">📂</span>
+                选择 EPUB 文件
+              </button>
+              <input type="file" id="file-input-welcome" accept=".epub" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="mobile-toggle" id="sidebar-toggle">
+      <span>☰</span>
+    </div>
+  </main>
+  <script src="js/script.js"></script>
+</body>
+</html>
