@@ -3,18 +3,10 @@ class EPUBReader {
         this.currentBook = null;
         this.currentChapterIndex = 0;
         this.chapters = [];
-        this.audioElements = {};
-        this.smilData = {};
-        this.isPlaying = false;
-        this.currentAudio = null;
-        this.currentHighlight = null;
-        this.zip = null;
         this.resourceMap = new Map();
-        this.currentSMILData = [];
         this.dictionaryButton = null;
         this.dictionaryModal = null;
         this.lastSelectionTime = 0;
-        this.isAudioReady = false;
         this.isSelecting = false;
         this.dictionaryButtonTimeout = null;
         this.viewMode = 'scroll';
@@ -26,7 +18,7 @@ class EPUBReader {
         this.selectionTimeout = null;
         this.touchStartTime = 0;
         this.currentWordData = null;
-        this.savedSelectionRange = null; // 添加保存的选择范围
+        this.savedSelectionRange = null;
         this.ankiConnected = false;
         this.currentModelFields = [];
         this.ankiSettings = {
@@ -40,6 +32,9 @@ class EPUBReader {
             audioField: '',
             tagsField: ''
         };
+        
+        // 新增属性
+        this.navigationMap = []; // 真正的目录结构
         
         this.initializeUI();
     }
@@ -61,14 +56,6 @@ class EPUBReader {
         this.prevPageBtn = document.getElementById('prevPage');
         this.nextPageBtn = document.getElementById('nextPage');
         this.uploadBtn = document.getElementById('uploadBtn');
-        this.playerContainer = document.getElementById('playerContainer');
-        this.playPauseBtn = document.getElementById('playPauseBtn');
-        this.progressBar = document.getElementById('progressBar');
-        this.progress = document.getElementById('progress');
-        this.currentTimeSpan = document.getElementById('currentTime');
-        this.durationSpan = document.getElementById('duration');
-        this.playbackRateSelect = document.getElementById('playbackRate');
-        this.swipeContainer = document.getElementById('swipeContainer');
         
         // 边缘点击区域
         this.leftEdgeTapArea = document.getElementById('leftEdgeTapArea');
@@ -84,8 +71,6 @@ class EPUBReader {
         this.autoScroll = document.getElementById('autoScroll');
         this.fontSize = document.getElementById('fontSize');
         this.theme = document.getElementById('theme');
-        this.autoPlay = document.getElementById('autoPlay');
-        this.speechRate = document.getElementById('speechRate');
         this.offlineMode = document.getElementById('offlineMode');
         this.syncProgress = document.getElementById('syncProgress');
         this.exportDataBtn = document.getElementById('exportData');
@@ -118,6 +103,9 @@ class EPUBReader {
         this.highlightBtn = document.getElementById('highlightBtn');
         this.copyBtn = document.getElementById('copyBtn');
         this.shareBtn = document.getElementById('shareBtn');
+
+        // 阅读区域容器
+        this.swipeContainer = document.getElementById('swipeContainer');
         
         this.bindEvents();
         this.loadSettings();
@@ -131,7 +119,10 @@ class EPUBReader {
         this.closeSidebarBtn.addEventListener('click', () => this.toggleSidebar());
         this.prevPageBtn.addEventListener('click', () => this.prevPage());
         this.nextPageBtn.addEventListener('click', () => this.nextPage());
-        this.uploadBtn.addEventListener('click', () => this.fileInput.click());
+        this.uploadBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); // 阻止事件冒泡
+            this.fileInput.click();
+        });
         
         // 设置按钮事件
         this.toggleSettingsBtn.addEventListener('click', () => this.toggleSettings());
@@ -151,8 +142,6 @@ class EPUBReader {
             this.saveSettings();
             this.applyTheme();
         });
-        this.autoPlay.addEventListener('change', () => this.saveSettings());
-        this.speechRate.addEventListener('change', () => this.saveSettings());
         this.offlineMode.addEventListener('change', () => this.saveSettings());
         this.syncProgress.addEventListener('change', () => this.saveSettings());
         this.exportDataBtn.addEventListener('click', () => this.exportData());
@@ -163,13 +152,14 @@ class EPUBReader {
         this.saveAnkiSettingsBtn.addEventListener('click', () => this.saveAnkiSettings());
         
         // 上传区域事件
-        this.uploadArea.addEventListener('click', () => this.fileInput.click());
-        this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
-        
-        // 音频控制事件
-        this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
-        this.progressBar.addEventListener('click', (e) => this.seekAudio(e));
-        this.playbackRateSelect.addEventListener('change', (e) => this.changePlaybackRate(e.target.value));
+        this.uploadArea.addEventListener('click', (e) => {
+            e.stopPropagation(); // 阻止事件冒泡
+            this.fileInput.click();
+        });
+        this.fileInput.addEventListener('change', (e) => {
+            console.log('文件选择事件触发');
+            this.handleFileSelect(e);
+        });
         
         // 边缘点击翻页事件
         this.leftEdgeTapArea.addEventListener('click', () => this.prevPage());
@@ -232,6 +222,9 @@ class EPUBReader {
 
         // 键盘快捷键
         document.addEventListener('keydown', (e) => this.handleKeydown(e));
+        
+        // 窗口大小变化事件
+        window.addEventListener('resize', () => this.handleResize());
     }
 
     // 初始化设置分组折叠功能
@@ -246,6 +239,21 @@ class EPUBReader {
         });
     }
 
+    // 窗口大小变化处理
+    handleResize() {
+        if (this.viewMode === 'paged' && this.chapters.length > 0) {
+            // 防抖处理，避免频繁重新分页
+            clearTimeout(this.resizeTimeout);
+            this.resizeTimeout = setTimeout(() => {
+                const currentChapter = this.chapters[this.currentChapterIndex];
+                if (currentChapter) {
+                    console.log('窗口大小变化，重新分页...');
+                    this.splitChapterIntoPages(currentChapter.content);
+                }
+            }, 250);
+        }
+    }
+
     // 键盘快捷键处理
     handleKeydown(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -258,10 +266,6 @@ class EPUBReader {
             case 'ArrowRight':
                 e.preventDefault();
                 this.nextPage();
-                break;
-            case ' ':
-                e.preventDefault();
-                this.togglePlayPause();
                 break;
             case 'Escape':
                 this.hideDictionaryModal();
@@ -286,8 +290,6 @@ class EPUBReader {
         this.autoScroll.checked = settings.autoScroll || false;
         this.fontSize.value = settings.fontSize || 'medium';
         this.theme.value = settings.theme || 'light';
-        this.autoPlay.checked = settings.autoPlay !== false;
-        this.speechRate.value = settings.speechRate || '1';
         this.offlineMode.checked = settings.offlineMode || false;
         this.syncProgress.checked = settings.syncProgress !== false;
         
@@ -302,8 +304,6 @@ class EPUBReader {
             autoScroll: this.autoScroll.checked,
             fontSize: this.fontSize.value,
             theme: this.theme.value,
-            autoPlay: this.autoPlay.checked,
-            speechRate: this.speechRate.value,
             offlineMode: this.offlineMode.checked,
             syncProgress: this.syncProgress.checked
         };
@@ -750,18 +750,6 @@ class EPUBReader {
             note.fields[this.ankiSettings.tagsField] = 'epub-reader';
         }
         
-        if (this.ankiSettings.audioField) {
-            try {
-                const audioFilename = await this.processAudioForWord(word);
-                if (audioFilename) {
-                    note.fields[this.ankiSettings.audioField] = `[sound:${audioFilename}]`;
-                    console.log('音频字段设置:', audioFilename);
-                }
-            } catch (error) {
-                console.error('音频处理失败:', error);
-            }
-        }
-        
         console.log('准备添加到Anki的笔记:', note);
         
         await this.addCardToAnki(note);
@@ -799,25 +787,19 @@ class EPUBReader {
             
             const elementId = elementWithId.id;
             
-            // 在SMIL数据中查找对应的文本段
-            const segment = this.currentSMILData.find(s => s.textId === elementId);
-            if (!segment) {
-                return selectedText;
-            }
-            
-            // 直接从DOM中获取该ID元素的完整文本内容
+            // 从DOM中获取该ID元素的完整文本内容
             const textElement = document.getElementById(elementId);
             if (textElement) {
                 const fullText = textElement.textContent || textElement.innerText;
                 const cleanedText = this.cleanSentenceText(fullText);
-                console.log('从SMIL获取的完整句子:', cleanedText);
+                console.log('获取的完整句子:', cleanedText);
                 return cleanedText || selectedText;
             }
             
             return selectedText;
             
         } catch (error) {
-            console.error('从SMIL获取句子失败:', error);
+            console.error('获取句子失败:', error);
             return selectedText;
         }
     }
@@ -830,239 +812,6 @@ class EPUBReader {
             .replace(/^[^a-zA-Z]*/, '') // 移除开头的非字母字符
             .replace(/[^a-zA-Z0-9\.!?]*$/, '') // 移除结尾的非字母数字和标点
             .trim();
-    }
-
-    async processAudioForWord(word) {
-        try {
-            if (!this.currentAudio || !this.currentSMILData || this.currentSMILData.length === 0) {
-                console.log('没有可用的音频数据');
-                return null;
-            }
-
-            if (!this.savedSelectionRange) {
-                console.log('没有保存的文本选择范围');
-                return null;
-            }
-            
-            const range = this.savedSelectionRange;
-            let elementWithId = range.startContainer.parentElement;
-            
-            // 向上查找有ID的元素
-            while (elementWithId && !elementWithId.id && elementWithId.parentElement) {
-                elementWithId = elementWithId.parentElement;
-            }
-            
-            if (!elementWithId || !elementWithId.id) {
-                console.log('未找到带ID的文本元素');
-                return null;
-            }
-            
-            const elementId = elementWithId.id;
-            console.log('查找音频段，元素ID:', elementId);
-            
-            // 精确匹配SMIL数据
-            const segment = this.currentSMILData.find(s => s.textId === elementId);
-            
-            if (!segment) {
-                console.log('未找到对应的音频段');
-                console.log('可用的音频段ID:', this.currentSMILData.map(s => s.textId));
-                return null;
-            }
-            
-            console.log('找到精确匹配的音频段:', segment);
-            
-            // 获取音频Blob
-            const audioBlob = await this.getAudioBlob(segment.audioSrc);
-            if (!audioBlob) {
-                console.log('无法获取音频Blob');
-                return null;
-            }
-            
-            console.log('获取到音频Blob，大小:', audioBlob.size);
-            
-            // 切割音频 - 使用SMIL中精确的时间段
-            const audioClip = await this.generateAudioClip(audioBlob, segment.start, segment.end);
-            if (!audioClip) {
-                console.log('音频切割失败');
-                return null;
-            }
-            
-            // 存储到Anki
-            const filename = this.generateAudioFileName(word);
-            const storedName = await this.storeMediaFile(filename, audioClip);
-            
-            console.log('音频文件存储成功:', storedName);
-            return storedName;
-            
-        } catch (error) {
-            console.error('处理音频失败:', error);
-            return null;
-        }
-    }
-
-    // 获取当前播放音频的Blob
-    async getCurrentAudioBlob() {
-        try {
-            if (!this.currentAudio || !this.currentAudio.src) {
-                return null;
-            }
-            
-            if (this.currentAudio.src.startsWith('blob:')) {
-                const response = await fetch(this.currentAudio.src);
-                return await response.blob();
-            }
-            
-            return null;
-        } catch (error) {
-            console.error('获取当前音频Blob失败:', error);
-            return null;
-        }
-    }
-
-    // 获取音频时长
-    async getAudioDuration(blob) {
-        return new Promise((resolve) => {
-            const audio = new Audio();
-            audio.addEventListener('loadedmetadata', () => {
-                resolve(audio.duration);
-            });
-            audio.addEventListener('error', () => {
-                resolve(0);
-            });
-            audio.src = URL.createObjectURL(blob);
-        });
-    }
-
-    async generateAudioClip(audioBlob, startTime, endTime) {
-        try {
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            const arrayBuffer = await audioBlob.arrayBuffer();
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            
-            const audioDuration = audioBuffer.duration;
-            console.log('音频总时长:', audioDuration, 'SMIL时间范围:', startTime, '-', endTime);
-            
-            // 验证时间范围在音频范围内
-            if (startTime >= audioDuration || endTime > audioDuration) {
-                console.warn('SMIL时间范围超出音频长度，使用完整音频');
-                return audioBlob;
-            }
-            
-            if (startTime >= endTime) {
-                console.warn('SMIL时间范围无效，使用完整音频');
-                return audioBlob;
-            }
-            
-            const sampleRate = audioBuffer.sampleRate;
-            const startSample = Math.floor(startTime * sampleRate);
-            const endSample = Math.floor(endTime * sampleRate);
-            const frameCount = endSample - startSample;
-            
-            const newBuffer = audioContext.createBuffer(
-                audioBuffer.numberOfChannels,
-                frameCount,
-                sampleRate
-            );
-            
-            for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-                const oldData = audioBuffer.getChannelData(channel);
-                const newData = newBuffer.getChannelData(channel);
-                for (let i = 0; i < frameCount; i++) {
-                    newData[i] = oldData[startSample + i];
-                }
-            }
-            
-            return this.bufferToWavBlob(newBuffer);
-            
-        } catch (error) {
-            console.error('音频切割失败:', error);
-            return audioBlob;
-        }
-    }
-
-    bufferToWavBlob(buffer) {
-        const numChannels = buffer.numberOfChannels;
-        const sampleRate = buffer.sampleRate;
-        const length = buffer.length;
-        const bytesPerSample = 2;
-        const blockAlign = numChannels * bytesPerSample;
-        
-        const dataSize = length * blockAlign;
-        
-        const bufferArray = new ArrayBuffer(44 + dataSize);
-        const view = new DataView(bufferArray);
-        
-        function writeString(view, offset, string) {
-            for (let i = 0; i < string.length; i++) {
-                view.setUint8(offset + i, string.charCodeAt(i));
-            }
-        }
-        
-        writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + dataSize, true);
-        writeString(view, 8, 'WAVE');
-        writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true);
-        view.setUint16(22, numChannels, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * blockAlign, true);
-        view.setUint16(32, blockAlign, true);
-        view.setUint16(34, bytesPerSample * 8, true);
-        writeString(view, 36, 'data');
-        view.setUint32(40, dataSize, true);
-        
-        const offset = 44;
-        let index = 0;
-        
-        for (let i = 0; i < length; i++) {
-            for (let channel = 0; channel < numChannels; channel++) {
-                const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]));
-                const int16Sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                view.setInt16(offset + index, int16Sample, true);
-                index += 2;
-            }
-        }
-        
-        return new Blob([bufferArray], { type: 'audio/wav' });
-    }
-
-    generateAudioFileName(word) {
-        const cleanWord = word.replace(/[^a-z]/gi, '').toLowerCase() || 'audio';
-        let fileName = `audio_${cleanWord}_${Date.now()}.wav`;
-        fileName = fileName.replace(/[^\w.\-]/g, '_');
-        return fileName;
-    }
-
-    async storeMediaFile(filename, blob) {
-        try {
-            const base64Data = await this.blobToBase64(blob);
-            const pureBase64 = base64Data.split(',')[1];
-            
-            if (!pureBase64) {
-                throw new Error('Base64数据转换失败');
-            }
-            
-            const result = await this.ankiRequest('storeMediaFile', {
-                filename: filename,
-                data: pureBase64,
-                deleteExisting: true
-            });
-            
-            return result || filename;
-            
-        } catch (error) {
-            console.error('存储媒体文件失败:', error);
-            return null;
-        }
-    }
-
-    blobToBase64(blob) {
-        return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.readAsDataURL(blob);
-        });
     }
 
     async addCardToAnki(note) {
@@ -1088,102 +837,6 @@ class EPUBReader {
                 throw error;
             }
         }
-    }
-
-    async getAudioBlob(audioPath) {
-        try {
-            console.log('尝试获取音频Blob，路径:', audioPath);
-            
-            // 如果是blob URL，直接获取
-            if (audioPath.startsWith('blob:')) {
-                const response = await fetch(audioPath);
-                return await response.blob();
-            }
-            
-            // 先尝试直接匹配
-            let blob = this.resourceMap.get(audioPath);
-            if (blob) {
-                console.log('直接匹配找到音频:', audioPath);
-                return blob;
-            }
-            
-            // 尝试各种可能的路径变体
-            const possiblePaths = this.generateAudioPaths(audioPath);
-            console.log('尝试的音频路径列表:', possiblePaths);
-            
-            for (const path of possiblePaths) {
-                blob = this.resourceMap.get(path);
-                if (blob) {
-                    console.log('找到音频文件:', path);
-                    return blob;
-                }
-            }
-            
-            // 如果还是没找到，尝试搜索包含文件名的资源
-            const fileName = audioPath.split('/').pop();
-            if (fileName) {
-                for (const [path, blob] of this.resourceMap.entries()) {
-                    if (path.includes(fileName)) {
-                        console.log('通过文件名搜索找到音频:', path);
-                        return blob;
-                    }
-                }
-            }
-            
-            console.warn('无法找到音频文件:', audioPath);
-            console.log('当前资源映射中的文件:', Array.from(this.resourceMap.keys()));
-            return null;
-            
-        } catch (error) {
-            console.error('获取音频Blob失败:', error);
-            return null;
-        }
-    }
-
-    generateAudioPaths(audioPath) {
-        const paths = new Set();
-        
-        // 原始路径
-        paths.add(audioPath);
-        
-        // 处理相对路径
-        if (audioPath.startsWith('../')) {
-            const normalized = audioPath.substring(3); // 移除 ../
-            paths.add(normalized);
-            paths.add('./' + normalized);
-        }
-        
-        if (audioPath.startsWith('./')) {
-            const normalized = audioPath.substring(2); // 移除 ./
-            paths.add(normalized);
-            paths.add('../' + normalized);
-        }
-        
-        // 处理绝对路径
-        if (audioPath.startsWith('/')) {
-            const normalized = audioPath.substring(1); // 移除开头的 /
-            paths.add(normalized);
-            paths.add('./' + normalized);
-            paths.add('../' + normalized);
-        }
-        
-        // 添加各种组合
-        paths.add(audioPath.replace(/^\.\.\//, ''));
-        paths.add(audioPath.replace(/^\.\//, ''));
-        paths.add(audioPath.replace(/^\//, ''));
-        
-        // 添加带Audio目录的路径
-        if (!audioPath.includes('Audio/')) {
-            paths.add('Audio/' + audioPath);
-            paths.add('./Audio/' + audioPath);
-            paths.add('../Audio/' + audioPath);
-        }
-        
-        // 添加当前目录
-        paths.add('./' + audioPath);
-        paths.add('../' + audioPath);
-        
-        return Array.from(paths);
     }
 
     // 文本选择事件绑定
@@ -1451,35 +1104,46 @@ class EPUBReader {
     }
 
     loadChapter(index) {
-        if (index < 0 || index >= this.chapters.length) return;
+        console.log('加载章节:', index);
+        if (index < 0 || index >= this.chapters.length) {   
+            console.error('章节索引超出范围:', index);
+            return;
+        }
         
         this.currentChapterIndex = index;
         const chapter = this.chapters[index];
+
+        console.log('当前章节信息:', {
+            title: chapter.title,
+            contentLength: chapter.content.length
+        });
         
         if (this.viewMode === 'scroll') {
+            console.log('使用滚动模式显示内容');
             this.pageContent.innerHTML = chapter.content;
             this.pageContent.className = 'page-content scroll-mode';
             this.currentPageSpan.textContent = (index + 1).toString();
             this.totalPagesSpan.textContent = this.chapters.length;
         } else {
+            console.log('使用分页模式显示内容');
             this.splitChapterIntoPages(chapter.content);
             this.pageContent.className = 'page-content paged-mode';
             this.currentPageSpan.textContent = '1';
             this.totalPagesSpan.textContent = this.sections.length;
         }
+
+        // 检查页面内容是否成功显示
+        setTimeout(() => {
+            console.log('页面内容检查:', {
+                innerHTML: this.pageContent.innerHTML.length,
+                childNodes: this.pageContent.childNodes.length,
+                textContent: this.pageContent.textContent?.substring(0, 100)
+            });
+        }, 100);
         
         this.updateTOCHighlight();
         
-        this.currentSMILData = chapter.audio ? chapter.audio.smilData || [] : [];
-        this.bindDoubleClickEvents();
-        
         this.bindSelectionEventsToNewContent();
-        
-        if (chapter.audio && chapter.audio.src) {
-            this.prepareAudioPlayer(chapter);
-        } else {
-            this.playerContainer.style.display = 'none';
-        }
         
         this.pageContent.scrollTop = 0;
     }
@@ -1510,48 +1174,90 @@ class EPUBReader {
     }
 
     splitChapterIntoPages(content) {
+        // 如果已经是分页模式且内容没有变化，不需要重新分页
+        if (this.sections.length > 0 && this.lastContent === content) {
+            console.log('内容未变化，跳过重新分页');
+            return;
+        }
+        
+        this.lastContent = content;
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = content;
-        tempDiv.classList.add('epub-content');
+        
+        // 应用相同的样式
+        tempDiv.style.cssText = `
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            width: ${this.pageContent.offsetWidth - 40}px;
+            padding: 20px;
+            font-size: inherit;
+            line-height: inherit;
+            box-sizing: border-box;
+        `;
+        
+        // 复制页面内容的样式
+        const pageStyles = window.getComputedStyle(this.pageContent);
+        tempDiv.style.fontSize = pageStyles.fontSize;
+        tempDiv.style.lineHeight = pageStyles.lineHeight;
+        tempDiv.style.fontFamily = pageStyles.fontFamily;
+        
+        document.body.appendChild(tempDiv);
         
         const container = this.pageContent;
-        const containerHeight = container.offsetHeight - 40;
-        const containerWidth = container.offsetWidth - 40;
+        const containerHeight = container.offsetHeight;
+        const containerWidth = container.offsetWidth - 40; // 考虑padding
         
         this.sections = [];
         
-        const elements = tempDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, blockquote, pre, ul, ol, li');
+        // 获取所有需要分页的元素
+        const elements = this.getPageElements(tempDiv);
         
         if (elements.length === 0) {
+            // 如果没有子元素，直接使用整个内容
             this.sections.push(content);
         } else {
-            let currentPage = [];
+            let currentPageElements = [];
             let currentHeight = 0;
             
             for (let element of elements) {
-                const elementHeight = this.simpleEstimateHeight(element, containerWidth);
+                const elementInfo = this.getElementInfo(element, containerWidth);
                 
-                if (currentHeight > 0 && currentHeight + elementHeight > containerHeight) {
-                    this.sections.push(currentPage.map(el => el.outerHTML).join(''));
-                    currentPage = [];
+                // 如果当前页已经有内容，并且添加这个元素会超出容器高度
+                if (currentHeight > 0 && currentHeight + elementInfo.totalHeight > containerHeight - 40) {
+                    // 保存当前页
+                    this.savePageSection(currentPageElements);
+                    currentPageElements = [];
                     currentHeight = 0;
                 }
                 
-                currentPage.push(element.cloneNode(true));
-                currentHeight += elementHeight;
-                
-                if (elementHeight > containerHeight && currentPage.length > 1) {
-                    const lastElement = currentPage.pop();
-                    this.sections.push(currentPage.map(el => el.outerHTML).join(''));
-                    currentPage = [lastElement];
-                    currentHeight = elementHeight;
+                // 如果单个元素本身就超过容器高度
+                if (elementInfo.totalHeight > containerHeight - 40) {
+                    // 如果当前页有内容，先保存当前页
+                    if (currentPageElements.length > 0) {
+                        this.savePageSection(currentPageElements);
+                        currentPageElements = [];
+                        currentHeight = 0;
+                    }
+                    
+                    // 处理超大元素：尝试分割
+                    const splitElements = this.splitLargeElement(element, containerHeight - 40, containerWidth);
+                    currentPageElements.push(...splitElements);
+                    currentHeight = this.calculateElementsHeight(currentPageElements, containerWidth);
+                } else {
+                    currentPageElements.push(element);
+                    currentHeight += elementInfo.totalHeight;
                 }
             }
             
-            if (currentPage.length > 0) {
-                this.sections.push(currentPage.map(el => el.outerHTML).join(''));
+            // 添加最后一页
+            if (currentPageElements.length > 0) {
+                this.savePageSection(currentPageElements);
             }
         }
+        
+        // 清理临时元素
+        document.body.removeChild(tempDiv);
         
         if (this.sections.length === 0) {
             this.sections.push(content);
@@ -1564,37 +1270,247 @@ class EPUBReader {
         this.showSection(0);
     }
 
-    simpleEstimateHeight(element, containerWidth) {
+    // 保存页面部分
+    savePageSection(elements) {
+        const sectionHTML = elements.map(el => el.outerHTML).join('');
+        this.sections.push(sectionHTML);
+    }
+
+    getPageElements(container) {
+        const elements = [];
+        const walker = document.createTreeWalker(
+            container,
+            NodeFilter.SHOW_ELEMENT,
+            {
+                acceptNode: function(node) {
+                    // 包含常见的文本容器元素
+                    if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'UL', 'OL', 'LI', 'TABLE', 'FIGURE'].includes(node.tagName)) {
+                        return NodeFilter.FILTER_ACCEPT;
+                    }
+                    return NodeFilter.FILTER_SKIP;
+                }
+            }
+        );
+        
+        let node;
+        while (node = walker.nextNode()) {
+            elements.push(node.cloneNode(true));
+        }
+        
+        return elements;
+    }
+
+    getElementInfo(element, containerWidth) {
         const temp = document.createElement('div');
+        temp.appendChild(element.cloneNode(true));
         temp.style.cssText = `
             position: absolute;
             left: -9999px;
             top: -9999px;
             width: ${containerWidth}px;
-            padding: 20px;
-            font-size: 1.1rem;
-            line-height: 1.8;
+            padding: 0;
+            margin: 0;
         `;
-        
-        const clone = element.cloneNode(true);
-        temp.appendChild(clone);
         document.body.appendChild(temp);
         
         const height = temp.offsetHeight;
+        const style = window.getComputedStyle(element);
+        const marginTop = parseFloat(style.marginTop) || 0;
+        const marginBottom = parseFloat(style.marginBottom) || 0;
+        const totalHeight = height + marginTop + marginBottom;
+        
         document.body.removeChild(temp);
         
-        return height + 20;
+        return {
+            height,
+            marginTop,
+            marginBottom,
+            totalHeight
+        };
+    }
+
+    calculateElementsHeight(elements, containerWidth) {
+        if (elements.length === 0) return 0;
+        
+        const tempContainer = document.createElement('div');
+        tempContainer.style.cssText = `
+            position: absolute;
+            left: -9999px;
+            top: -9999px;
+            width: ${containerWidth}px;
+            padding: 0;
+            margin: 0;
+        `;
+        
+        elements.forEach(element => {
+            tempContainer.appendChild(element.cloneNode(true));
+        });
+        
+        document.body.appendChild(tempContainer);
+        const height = tempContainer.offsetHeight;
+        document.body.removeChild(tempContainer);
+        
+        return height;
+    }
+
+    splitLargeElement(element, maxHeight, containerWidth) {
+        const elements = [];
+        const elementType = element.tagName.toLowerCase();
+        
+        if (this.isTextElement(element)) {
+            // 对于文本元素，按段落或句子分割
+            const chunks = this.splitTextElement(element, maxHeight, containerWidth);
+            elements.push(...chunks);
+        } else {
+            // 对于其他元素，直接添加并在需要时添加继续标记
+            elements.push(element.cloneNode(true));
+            if (this.getElementInfo(element, containerWidth).totalHeight > maxHeight) {
+                const continueMarker = document.createElement('div');
+                continueMarker.className = 'continue-marker';
+                continueMarker.innerHTML = '(继续...)';
+                continueMarker.style.cssText = `
+                    text-align: center;
+                    color: #666;
+                    font-style: italic;
+                    margin: 10px 0;
+                `;
+                elements.push(continueMarker);
+            }
+        }
+        
+        return elements;
+    }
+
+    // 判断是否为文本元素
+    isTextElement(element) {
+        return ['p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(element.tagName.toLowerCase());
+    }
+
+    // 分割文本元素
+    splitTextElement(element, maxHeight, containerWidth) {
+        const elements = [];
+        const originalHTML = element.innerHTML;
+        const className = element.className;
+        const style = element.style.cssText;
+        
+        // 如果是空元素，直接返回
+        if (!element.textContent.trim()) {
+            return [element.cloneNode(true)];
+        }
+        
+        // 先尝试按段落分割
+        const paragraphs = originalHTML.split(/<\/p>\s*<p[^>]*>/i);
+        if (paragraphs.length > 1) {
+            for (let i = 0; i < paragraphs.length; i++) {
+                let paragraph = paragraphs[i];
+                if (i === 0) {
+                    paragraph = paragraph.replace(/<p[^>]*>/i, '');
+                }
+                if (i === paragraphs.length - 1) {
+                    paragraph = paragraph.replace(/<\/p>/i, '');
+                }
+                
+                const pElement = document.createElement('p');
+                pElement.className = className;
+                pElement.style.cssText = style;
+                pElement.innerHTML = paragraph;
+                
+                if (this.getElementInfo(pElement, containerWidth).totalHeight > maxHeight) {
+                    // 如果段落还是太大，进一步分割
+                    const chunks = this.splitBySentences(pElement, maxHeight, containerWidth);
+                    elements.push(...chunks);
+                } else {
+                    elements.push(pElement);
+                }
+            }
+        } else {
+            // 没有段落，按句子分割
+            const chunks = this.splitBySentences(element, maxHeight, containerWidth);
+            elements.push(...chunks);
+        }
+        
+        return elements;
+    }
+
+    // 按句子分割
+    splitBySentences(element, maxHeight, containerWidth) {
+        const elements = [];
+        const text = element.textContent || '';
+        const className = element.className;
+        const style = element.style.cssText;
+        const tagName = element.tagName.toLowerCase();
+        
+        // 按句子分割（简单的分割规则）
+        const sentences = text.split(/([.!?])\s+/);
+        let currentChunk = [];
+        let currentHTML = '';
+        
+        for (let i = 0; i < sentences.length; i += 2) {
+            const sentence = sentences[i] + (sentences[i + 1] || '');
+            currentChunk.push(sentence);
+            currentHTML += sentence + ' ';
+            
+            const tempElement = document.createElement(tagName);
+            tempElement.className = className;
+            tempElement.style.cssText = style;
+            tempElement.textContent = currentHTML;
+            
+            document.body.appendChild(tempElement);
+            const height = this.getElementInfo(tempElement, containerWidth).totalHeight;
+            document.body.removeChild(tempElement);
+            
+            if (height > maxHeight && currentChunk.length > 1) {
+                // 当前块已经超过高度，保存之前的块（不包括当前句子）
+                currentChunk.pop(); // 移除最后一个句子
+                const chunkElement = document.createElement(tagName);
+                chunkElement.className = className;
+                chunkElement.style.cssText = style;
+                chunkElement.textContent = currentChunk.join(' ');
+                elements.push(chunkElement);
+                
+                // 开始新的块
+                currentChunk = [sentence];
+                currentHTML = sentence + ' ';
+            }
+        }
+        
+        // 添加最后一个块
+        if (currentChunk.length > 0) {
+            const chunkElement = document.createElement(tagName);
+            chunkElement.className = className;
+            chunkElement.style.cssText = style;
+            chunkElement.textContent = currentChunk.join(' ');
+            elements.push(chunkElement);
+        }
+        
+        return elements;
     }
 
     renderPagedContent() {
         const pagedContainer = document.createElement('div');
         pagedContainer.className = 'paged-content';
+        pagedContainer.style.cssText = `
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+        `;
         
         this.sections.forEach((sectionHtml, index) => {
             const section = document.createElement('div');
             section.className = 'page-section';
             section.innerHTML = sectionHtml;
-            section.style.display = index === 0 ? 'block' : 'none';
+            section.style.cssText = `
+                position: ${index === 0 ? 'relative' : 'absolute'};
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                padding: 20px;
+                box-sizing: border-box;
+                overflow-y: auto;
+                display: ${index === 0 ? 'block' : 'none'};
+                background: inherit;
+            `;
             pagedContainer.appendChild(section);
         });
         
@@ -1602,17 +1518,20 @@ class EPUBReader {
         this.pageContent.appendChild(pagedContainer);
         
         console.log('渲染分页内容完成，共', this.sections.length, '页');
+        
+        // 重新绑定事件
+        this.bindSelectionEventsToNewContent();
     }
-    
+
     showSection(index) {
         const sections = this.pageContent.querySelectorAll('.page-section');
         sections.forEach((section, i) => {
             if (i === index) {
-                section.classList.add('active');
                 section.style.display = 'block';
+                section.classList.add('active');
             } else {
-                section.classList.remove('active');
                 section.style.display = 'none';
+                section.classList.remove('active');
             }
         });
         this.currentSectionIndex = index;
@@ -1630,14 +1549,12 @@ class EPUBReader {
     prevPage() {
         if (this.viewMode === 'scroll') {
             if (this.currentChapterIndex > 0) {
-                this.stopAllAudio();
                 this.loadChapter(this.currentChapterIndex - 1);
             }
         } else {
             if (this.currentSectionIndex > 0) {
                 this.showSection(this.currentSectionIndex - 1);
             } else if (this.currentChapterIndex > 0) {
-                this.stopAllAudio();
                 this.loadChapter(this.currentChapterIndex - 1);
             }
         }
@@ -1646,14 +1563,12 @@ class EPUBReader {
     nextPage() {
         if (this.viewMode === 'scroll') {
             if (this.currentChapterIndex < this.chapters.length - 1) {
-                this.stopAllAudio();
                 this.loadChapter(this.currentChapterIndex + 1);
             }
         } else {
             if (this.currentSectionIndex < this.sections.length - 1) {
                 this.showSection(this.currentSectionIndex + 1);
             } else if (this.currentChapterIndex < this.chapters.length - 1) {
-                this.stopAllAudio();
                 this.loadChapter(this.currentChapterIndex + 1);
             }
         }
@@ -1792,26 +1707,6 @@ class EPUBReader {
         window.getSelection().removeAllRanges();
     }
     
-    async safePlayAudio(audio) {
-        try {
-            await audio.play();
-            return true;
-        } catch (error) {
-            console.warn('音频播放失败:', error);
-            return false;
-        }
-    }
-    
-    stopAllAudio() {
-        if (this.currentAudio) {
-            this.currentAudio.pause();
-            this.currentAudio.currentTime = 0;
-        }
-        this.isPlaying = false;
-        this.playPauseBtn.textContent = '▶';
-        this.clearHighlights();
-    }
-    
     handleFileSelect(event) {
         const file = event.target.files[0];
         if (file && file.name.endsWith('.epub')) {
@@ -1819,28 +1714,98 @@ class EPUBReader {
         }
     }
     
+    // 使用epub.js加载EPUB文件
     async loadEPUB(file) {
         try {
+            console.log('开始加载EPUB文件:', file.name);
             this.uploadArea.innerHTML = '<div class="loader"></div><p>正在解析EPUB文件...</p>';
             
-            this.zip = await JSZip.loadAsync(file);
-            await this.buildResourceMap();
+            // 使用epub.js创建书籍对象
+            this.book = ePub(file);
             
-            const containerContent = await this.getFileContent('META-INF/container.xml');
-            const containerDoc = this.parseXML(containerContent);
-            const rootfilePath = containerDoc.querySelector('rootfile').getAttribute('full-path');
+            // 等待书籍加载完成
+            await new Promise((resolve, reject) => {
+                this.book.ready.then(resolve).catch(reject);
+            });
             
-            const opfContent = await this.getFileContent(rootfilePath);
-            const opfDoc = this.parseXML(opfContent);
+            // 获取书籍元数据
+            const metadata = await this.book.loaded.metadata;
+            const title = metadata.title || '未知标题';
+            const creator = metadata.creator || '未知作者';
             
-            const metadata = opfDoc.querySelector('metadata');
-            const title = metadata.querySelector('dc\\:title, title')?.textContent || '未知标题';
-            const creator = metadata.querySelector('dc\\:creator, creator')?.textContent || '未知作者';
+            // 获取书籍导航
+            const navigation = await this.book.loaded.navigation;
             
-            const manifest = this.parseManifest(opfDoc, rootfilePath);
-            const readingOrder = this.parseSpine(opfDoc);
+            // 获取书籍目录
+            this.chapters = [];
+            this.navigationMap = navigation.toc || [];
             
-            this.chapters = await this.buildChapters(readingOrder, manifest, rootfilePath);
+            // 创建rendition来获取内容
+            const rendition = this.book.renderTo("pageContent", {
+                width: "100%",
+                height: "100%"
+            });
+            
+            // 使用spine顺序构建章节
+            const spine = this.book.spine;
+            
+            for (let i = 0; i < spine.length; i++) {
+                const item = spine.get(i);
+                
+                if (item && item.linear !== false) { // 只处理linear项目
+                    try {
+                        // 使用rendition.display来获取章节内容
+                        await rendition.display(item.href);
+                        
+                        // 获取渲染后的内容
+                        const iframe = document.querySelector("#pageContent iframe");
+                        let content = '';
+                        
+                        if (iframe && iframe.contentDocument) {
+                            content = iframe.contentDocument.body.innerHTML;
+                        } else {
+                            // 备用方法：直接使用section
+                            const section = await this.book.load(item.href);
+                            if (section.render) {
+                                content = await section.render();
+                            } else if (section.document) {
+                                content = section.document.body.innerHTML;
+                            }
+                        }
+                        
+                        // 查找章节标题
+                        let chapterTitle = `第${i + 1}章`;
+                        for (const navItem of this.navigationMap) {
+                            if (navItem.href === item.href) {
+                                chapterTitle = navItem.label;
+                                break;
+                            }
+                        }
+                        
+                        // 处理内容中的资源
+                        content = await this.processContentImages(content, item.href);
+                        
+                        this.chapters.push({
+                            id: item.id,
+                            title: chapterTitle,
+                            content: content,
+                            href: item.href
+                        });
+                        
+                    } catch (e) {
+                        console.warn(`无法加载章节: ${item.href}`, e);
+                        this.chapters.push({
+                            id: item.id,
+                            title: `第${i + 1}章`,
+                            content: `<p>无法加载此章节: ${e.message}</p>`,
+                            href: item.href
+                        });
+                    }
+                }
+            }
+            
+            // 销毁rendition
+            rendition.destroy();
             
             if (this.chapters.length === 0) {
                 throw new Error('未找到可读的章节内容');
@@ -1859,97 +1824,229 @@ class EPUBReader {
             `;
         }
     }
-    
-    async buildResourceMap() {
-        this.resourceMap.clear();
-        const files = Object.keys(this.zip.files);
-        
-        console.log('EPUB文件列表:', files);
-        
-        for (const filePath of files) {
-            if (!filePath.endsWith('/')) {
-                try {
-                    const file = this.zip.file(filePath);
-                    if (file) {
-                        const blob = await file.async('blob');
-                        this.resourceMap.set(filePath, blob);
+                
+    // 处理章节内容中的图片
+    async processContentImages(content, baseHref) {
+        try {
+            console.log('开始处理内容图片，baseHref:', baseHref);
+            
+            if (!content || content.trim() === '') {
+                console.warn('内容为空');
+                return content;
+            }
+            
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(content, 'text/html');
+            
+            // 检查解析结果
+            if (doc.querySelector('parsererror')) {
+                console.error('HTML解析错误，返回原始内容');
+                return content;
+            }
+            
+            // 处理图片
+            const images = doc.querySelectorAll('img');
+            console.log('找到图片数量:', images.length);
+            
+            for (const img of images) {
+                const src = img.getAttribute('src');
+                console.log('处理图片:', src);
+                
+                if (src && !src.startsWith('data:')) {
+                    try {
+                        // 使用epub.js的URL创建方法
+                        const url = this.book.path.resolve(src, baseHref);
+                        console.log('解析后的图片URL:', url);
                         
-                        // 添加标准化路径
-                        const normalizedPath = filePath.replace(/^\.\//, '');
-                        if (normalizedPath !== filePath) {
-                            this.resourceMap.set(normalizedPath, blob);
-                        }
+                        const blob = await this.book.load(url);
                         
-                        // 添加文件名作为键（用于搜索）
-                        const fileName = filePath.split('/').pop();
-                        if (fileName && !this.resourceMap.has(fileName)) {
-                            this.resourceMap.set(fileName, blob);
+                        if (blob) {
+                            const blobUrl = URL.createObjectURL(blob);
+                            img.src = blobUrl;
+                            console.log('图片加载成功:', src);
+                        } else {
+                            console.warn('无法获取图片blob:', src);
                         }
-                        
-                        // 如果是音频文件，记录日志
-                        if (filePath.match(/\.(mp3|wav|ogg|m4a)$/i)) {
-                            console.log('找到音频文件:', filePath);
-                        }
+                    } catch (e) {
+                        console.warn('图片加载失败:', src, e);
+                        img.style.backgroundColor = '#f0f0f0';
+                        img.alt = '图片加载失败: ' + src;
                     }
-                } catch (e) {
-                    console.warn(`无法加载资源: ${filePath}`, e);
                 }
             }
+            
+            // 处理链接
+            const links = doc.querySelectorAll('a[href]');
+            console.log('找到链接数量:', links.length);
+            
+            links.forEach(link => {
+                const href = link.getAttribute('href');
+                if (href && !href.startsWith('#') && !href.startsWith('http')) {
+                    // 将相对链接转换为绝对路径
+                    const fullPath = this.book.path.resolve(href, baseHref);
+                    link.setAttribute('data-href', fullPath);
+                    link.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        this.handleInternalLink(fullPath);
+                    });
+                }
+            });
+            
+            const processedContent = doc.body.innerHTML;
+            console.log('内容处理完成，长度:', processedContent.length);
+            return processedContent;
+            
+        } catch (error) {
+            console.error('处理内容图片时出错:', error);
+            return content; // 返回原始内容作为后备
         }
-        
-        console.log('资源映射构建完成，包含文件数量:', this.resourceMap.size);
     }
-    
-    async getFileContent(path) {
-        const possiblePaths = [
-            path,
-            path.replace(/^\.\//, ''),
-            './' + path,
-            path.startsWith('/') ? path.substring(1) : path
-        ];
+
+    handleInternalLink(href) {
+        console.log('处理内部链接:', href);
         
-        for (const tryPath of possiblePaths) {
-            const file = this.zip.file(tryPath);
-            if (file) {
-                return await file.async('text');
+        // 查找对应的章节
+        for (let i = 0; i < this.chapters.length; i++) {
+            const chapter = this.chapters[i];
+            if (chapter.href === href) {
+                this.loadChapter(i);
+                return;
             }
         }
         
-        throw new Error(`文件不存在: ${path}`);
+        // 如果没有找到匹配的章节，尝试加载新章节
+        this.loadNewChapter(href)
+            .then(chapter => {
+                this.chapters.push(chapter);
+                this.loadChapter(this.chapters.length - 1);
+            })
+            .catch(error => {
+                console.error('加载链接内容失败:', error);
+                this.showToast('无法加载链接内容');
+            });
     }
-    
-    parseXML(content) {
-        return new DOMParser().parseFromString(content, 'text/xml');
-    }
-    
-    parseManifest(opfDoc, rootfilePath) {
-        const manifest = {};
-        const rootDir = rootfilePath.includes('/') 
-            ? rootfilePath.substring(0, rootfilePath.lastIndexOf('/') + 1)
-            : '';
-        
-        const manifestItems = opfDoc.querySelectorAll('manifest item');
-        manifestItems.forEach(item => {
-            const id = item.getAttribute('id');
-            const href = item.getAttribute('href');
-            const mediaType = item.getAttribute('media-type');
-            const mediaOverlay = item.getAttribute('media-overlay');
+
+    // 加载新章节
+    async loadNewChapter(href) {
+        try {
+            const section = await this.book.load(href);
+            let content = section.content || '';
             
-            let fullPath = href;
-            if (rootDir && !href.startsWith('/') && !href.includes('://')) {
-                fullPath = this.resolvePath(rootDir, href);
-            }
+            // 处理章节中的图片
+            content = await this.processContentImages(content, href);
             
-            manifest[id] = {
-                href: fullPath,
-                mediaType,
-                mediaOverlay
+            return {
+                id: 'linked-' + Date.now(),
+                title: '链接内容',
+                content: content,
+                href: href
             };
-        });
-        
-        return manifest;
+        } catch (error) {
+            throw new Error(`无法加载章节: ${error.message}`);
+        }
+    }
+
+    initializeBook() {
+        this.uploadContainer.style.display = 'none';
+        this.swipeContainer.style.display = 'block';
+        this.pageContent.style.display = 'block';
+        this.bookTitle.textContent = this.currentBook.title;
+        this.bookAuthor.textContent = this.currentBook.author;
+        this.totalPagesSpan.textContent = this.chapters.length;
+        this.generateTOC();
+        this.loadChapter(0);
     }
     
+    generateTOC() {
+        this.tocContainer.innerHTML = '';
+        
+        if (this.navigationMap.length > 0) {
+            // 使用真正的目录结构
+            this.renderNavigationTree(this.navigationMap, this.tocContainer);
+        } else {
+            // 使用章节顺序
+            this.chapters.forEach((chapter, index) => {
+                const tocItem = document.createElement('div');
+                tocItem.className = 'toc-item';
+                tocItem.textContent = chapter.title;
+                tocItem.addEventListener('click', () => {
+                    this.loadChapter(index);
+                    if (window.innerWidth <= 768) {
+                        this.toggleSidebar();
+                    }
+                });
+                this.tocContainer.appendChild(tocItem);
+            });
+        }
+    }
+    
+    renderNavigationTree(navItems, container, level = 0) {
+        navItems.forEach(item => {
+            const tocItem = document.createElement('div');
+            tocItem.className = 'toc-item';
+            tocItem.style.paddingLeft = `${10 + level * 20}px`;
+            tocItem.textContent = item.label;
+            
+            // 查找对应的章节索引
+            const chapterIndex = this.findChapterIndexByHref(item.href);
+            
+            if (chapterIndex !== -1) {
+                tocItem.addEventListener('click', () => {
+                    this.loadChapter(chapterIndex);
+                    if (window.innerWidth <= 768) {
+                        this.toggleSidebar();
+                    }
+                });
+            } else {
+                tocItem.style.color = '#999';
+                tocItem.style.cursor = 'not-allowed';
+            }
+            
+            container.appendChild(tocItem);
+            
+            // 递归渲染子项目
+            if (item.subitems && item.subitems.length > 0) {
+                this.renderNavigationTree(item.subitems, container, level + 1);
+            }
+        });
+    }
+    
+    findChapterIndexByHref(href) {
+        for (let i = 0; i < this.chapters.length; i++) {
+            const chapter = this.chapters[i];
+            if (chapter.href === href) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    
+    updateTOCHighlight() {
+        const tocItems = document.querySelectorAll('.toc-item');
+        tocItems.forEach((item, index) => {
+            item.classList.toggle('active', index === this.currentChapterIndex);
+        });
+    }
+    
+    prevChapter() {
+        if (this.currentChapterIndex > 0) {
+            this.loadChapter(this.currentChapterIndex - 1);
+        }
+    }
+    
+    nextChapter() {
+        if (this.currentChapterIndex < this.chapters.length - 1) {
+            this.loadChapter(this.currentChapterIndex + 1);
+        }
+    }
+
+    // 辅助方法
+    getBasePath(filePath) {
+        return filePath.includes('/') 
+            ? filePath.substring(0, filePath.lastIndexOf('/') + 1)
+            : '';
+    }
+
     resolvePath(base, relative) {
         if (relative.startsWith('/')) return relative.substring(1);
         
@@ -1965,499 +2062,6 @@ class EPUBReader {
         }
         
         return baseParts.join('/');
-    }
-    
-    parseSpine(opfDoc) {
-        const readingOrder = [];
-        const spineItems = opfDoc.querySelectorAll('spine itemref');
-        spineItems.forEach(item => {
-            const idref = item.getAttribute('idref');
-            readingOrder.push(idref);
-        });
-        return readingOrder;
-    }
-    
-    async buildChapters(readingOrder, manifest, rootfilePath) {
-        const chapters = [];
-        
-        for (const idref of readingOrder) {
-            const item = manifest[idref];
-            if (item && item.mediaType === 'application/xhtml+xml') {
-                try {
-                    const content = await this.loadHTMLContent(item.href);
-                    const audioData = item.mediaOverlay 
-                        ? await this.parseSMIL(manifest[item.mediaOverlay]?.href)
-                        : null;
-                    
-                    const title = await this.extractChapterTitle(item.href) || `第${chapters.length + 1}章`;
-                    
-                    chapters.push({
-                        id: idref,
-                        title: title,
-                        content: content,
-                        audio: audioData,
-                        basePath: this.getBasePath(item.href)
-                    });
-                } catch (e) {
-                    console.warn(`无法加载章节: ${item.href}`, e);
-                    chapters.push({
-                        id: idref,
-                        title: `第${chapters.length + 1}章`,
-                        content: `<p>无法加载此章节: ${e.message}</p>`,
-                        audio: null
-                    });
-                }
-            }
-        }
-        
-        return chapters;
-    }
-    
-    async extractChapterTitle(href) {
-        try {
-            const content = await this.getFileContent(href);
-            const doc = new DOMParser().parseFromString(content, 'text/html');
-            const title = doc.querySelector('title')?.textContent || 
-                         doc.querySelector('h1')?.textContent ||
-                         doc.querySelector('h2')?.textContent;
-            return title ? title.trim() : null;
-        } catch (e) {
-            return null;
-        }
-    }
-    
-    getBasePath(filePath) {
-        return filePath.includes('/') 
-            ? filePath.substring(0, filePath.lastIndexOf('/') + 1)
-            : '';
-    }
-    
-    async loadHTMLContent(href) {
-        const content = await this.getFileContent(href);
-        return this.processHTMLContent(content, this.getBasePath(href));
-    }
-    
-    processHTMLContent(html, basePath) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        
-        const images = doc.querySelectorAll('img');
-        images.forEach(img => {
-            const src = img.getAttribute('src');
-            if (src && !src.startsWith('data:')) {
-                const fullPath = this.resolvePath(basePath, src);
-                const blob = this.resourceMap.get(fullPath);
-                if (blob) {
-                    const blobUrl = URL.createObjectURL(blob);
-                    img.src = blobUrl;
-                }
-            }
-        });
-        
-        const body = doc.body;
-        body.classList.add('epub-content');
-        
-        return body.innerHTML;
-    }
-    
-    handleDoubleClick(e) {
-        console.log('双击事件:', e);
-        
-        this.stopAllAudio();
-        
-        if (!this.currentAudio || this.currentSMILData.length === 0) {
-            console.log('没有音频或SMIL数据');
-            return;
-        }
-        
-        const targetElement = e.target;
-        console.log('双击目标元素:', targetElement);
-        
-        let elementWithId = targetElement;
-        while (elementWithId && !elementWithId.id && elementWithId.parentElement && elementWithId.parentElement !== this.pageContent) {
-            elementWithId = elementWithId.parentElement;
-        }
-        
-        const elementId = elementWithId.id;
-        console.log('找到的元素ID:', elementId);
-        
-        if (!elementId) {
-            console.log('元素没有ID');
-            return;
-        }
-        
-        const segment = this.currentSMILData.find(s => s.textId === elementId);
-        console.log('找到的音频段:', segment);
-        
-        if (segment) {
-            this.currentAudio.currentTime = segment.start;
-            this.playAudio();
-            
-            this.clearHighlights();
-            elementWithId.classList.add('highlight', 'active-highlight');
-            this.currentHighlight = elementWithId;
-            this.scrollToHighlight(elementWithId);
-        } else {
-            console.log('未找到对应的音频段');
-        }
-    }
-    
-    async parseSMIL(smilPath) {
-        if (!smilPath) return null;
-        
-        try {
-            const smilContent = await this.getFileContent(smilPath);
-            const smilDoc = this.parseXML(smilContent);
-            
-            const audioElements = smilDoc.querySelectorAll('audio');
-            if (audioElements.length > 0) {
-                const audioSrc = audioElements[0].getAttribute('src');
-                const basePath = this.getBasePath(smilPath);
-                const fullAudioPath = this.resolvePath(basePath, audioSrc);
-                
-                const smilData = this.extractSMILData(smilDoc);
-                
-                return {
-                    src: fullAudioPath,
-                    smilData: smilData
-                };
-            }
-        } catch (e) {
-            console.warn('解析SMIL文件失败:', e);
-        }
-        
-        return null;
-    }
-    
-    extractSMILData(smilDoc) {
-        const data = [];
-        const pars = smilDoc.querySelectorAll('par');
-        
-        console.log('解析SMIL数据，找到段落数量:', pars.length);
-        
-        pars.forEach((par, index) => {
-            const textElem = par.querySelector('text');
-            const audioElem = par.querySelector('audio');
-            
-            if (textElem && audioElem) {
-                const textSrc = textElem.getAttribute('src');
-                const audioSrc = audioElem.getAttribute('src');
-                const clipBegin = audioElem.getAttribute('clipBegin');
-                const clipEnd = audioElem.getAttribute('clipEnd');
-                
-                if (textSrc) {
-                    const textId = textSrc.includes('#') 
-                        ? textSrc.split('#')[1] 
-                        : textSrc;
-                    
-                    data.push({
-                        textId: textId,
-                        audioSrc: audioSrc,
-                        start: this.parseTime(clipBegin),
-                        end: this.parseTime(clipEnd),
-                        index: index // 添加索引用于调试
-                    });
-                    
-                    console.log(`SMIL段落 ${index}:`, {
-                        textId: textId,
-                        audioSrc: audioSrc,
-                        timeRange: `${clipBegin} - ${clipEnd}`
-                    });
-                }
-            }
-        });
-        
-        data.sort((a, b) => a.start - b.start);
-        console.log('SMIL数据解析完成，共', data.length, '个段落');
-        return data;
-    }
-    
-    parseTime(timeStr) {
-        if (!timeStr) return 0;
-        
-        if (timeStr.includes(':')) {
-            const parts = timeStr.split(':');
-            if (parts.length === 3) {
-                return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
-            } else if (parts.length === 2) {
-                return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
-            }
-        }
-        
-        return parseFloat(timeStr);
-    }
-    
-    initializeBook() {
-        this.uploadContainer.style.display = 'none';
-        this.swipeContainer.style.display = 'block';
-        this.pageContent.style.display = 'block';
-        this.bookTitle.textContent = this.currentBook.title;
-        this.bookAuthor.textContent = this.currentBook.author;
-        this.totalPagesSpan.textContent = this.chapters.length;
-        this.generateTOC();
-        this.loadChapter(0);
-    }
-    
-    generateTOC() {
-        this.tocContainer.innerHTML = '';
-        this.chapters.forEach((chapter, index) => {
-            const tocItem = document.createElement('div');
-            tocItem.className = 'toc-item';
-            tocItem.textContent = chapter.title;
-            tocItem.addEventListener('click', () => {
-                this.stopAllAudio();
-                this.loadChapter(index);
-                if (window.innerWidth <= 768) {
-                    this.toggleSidebar();
-                }
-            });
-            this.tocContainer.appendChild(tocItem);
-        });
-    }
-    
-    bindDoubleClickEvents() {
-        const oldElements = this.pageContent.querySelectorAll('[data-double-click]');
-        oldElements.forEach(el => {
-            el.removeEventListener('dblclick', this.handleDoubleClickBound);
-        });
-        
-        const textElements = this.pageContent.querySelectorAll('p, span, div, h1, h2, h3, h4, h5, h6');
-        console.log('找到的可双击元素数量:', textElements.length);
-        
-        this.handleDoubleClickBound = (e) => this.handleDoubleClick(e);
-        
-        textElements.forEach(element => {
-            element.setAttribute('data-double-click', 'true');
-            element.addEventListener('dblclick', this.handleDoubleClickBound);
-        });
-    }
-    
-    updateTOCHighlight() {
-        const tocItems = document.querySelectorAll('.toc-item');
-        tocItems.forEach((item, index) => {
-            item.classList.toggle('active', index === this.currentChapterIndex);
-        });
-    }
-    
-    async prepareAudioPlayer(chapter) {
-        this.playerContainer.style.display = 'flex';
-        
-        if (!this.audioElements[chapter.id]) {
-            try {
-                const audioUrl = await this.createAudioFromZip(chapter.audio.src);
-                console.log('创建音频URL:', audioUrl);
-                
-                const audio = new Audio(audioUrl);
-                
-                await new Promise((resolve, reject) => {
-                    audio.addEventListener('canplaythrough', resolve);
-                    audio.addEventListener('error', (e) => {
-                        console.error('音频加载错误:', e);
-                        reject(new Error(`音频加载失败: ${chapter.audio.src}`));
-                    });
-                    
-                    // 超时处理
-                    setTimeout(() => reject(new Error('音频加载超时')), 10000);
-                });
-                
-                audio.addEventListener('timeupdate', () => {
-                    this.updateProgress();
-                    this.highlightCurrentText();
-                });
-                
-                audio.addEventListener('loadedmetadata', () => {
-                    console.log('音频时长:', audio.duration);
-                    this.durationSpan.textContent = this.formatTime(audio.duration);
-                });
-                
-                audio.addEventListener('ended', () => this.audioEnded());
-                
-                this.audioElements[chapter.id] = audio;
-                this.currentAudio = audio;
-                this.isAudioReady = true;
-                
-                console.log('音频播放器准备完成');
-                
-            } catch (error) {
-                console.error('加载音频失败:', error);
-                this.playerContainer.style.display = 'none';
-                this.showToast('音频加载失败: ' + error.message);
-                return;
-            }
-        } else {
-            this.currentAudio = this.audioElements[chapter.id];
-            this.isAudioReady = true;
-        }
-        
-        this.isPlaying = false;
-        this.playPauseBtn.textContent = '▶';
-        this.progress.style.width = '0%';
-        this.currentTimeSpan.textContent = '0:00';
-        
-        this.clearHighlights();
-    }
-    
-    highlightCurrentText() {
-        if (!this.currentAudio || this.currentSMILData.length === 0) return;
-        
-        const currentTime = this.currentAudio.currentTime;
-        
-        let currentSegment = null;
-        for (const segment of this.currentSMILData) {
-            if (currentTime >= segment.start && currentTime < segment.end) {
-                currentSegment = segment;
-                break;
-            }
-        }
-        
-        this.clearHighlights();
-        
-        if (currentSegment) {
-            const element = document.getElementById(currentSegment.textId);
-            if (element) {
-                element.classList.add('highlight', 'active-highlight');
-                this.currentHighlight = element;
-                
-                this.scrollToHighlight(element);
-            }
-        }
-    }
-    
-    scrollToHighlight(element) {
-        if (!element) return;
-        
-        const elementRect = element.getBoundingClientRect();
-        const pageRect = this.pageContent.getBoundingClientRect();
-        
-        if (elementRect.top < pageRect.top || elementRect.bottom > pageRect.bottom) {
-            element.scrollIntoView({ 
-                behavior: 'smooth', 
-                block: 'center',
-                inline: 'nearest'
-            });
-        }
-    }
-    
-    clearHighlights() {
-        const highlights = this.pageContent.querySelectorAll('.highlight, .active-highlight');
-        highlights.forEach(element => {
-            element.classList.remove('highlight', 'active-highlight');
-        });
-        this.currentHighlight = null;
-    }
-    
-    async createAudioFromZip(audioPath) {
-        console.log('尝试创建音频URL，路径:', audioPath);
-        
-        const possiblePaths = this.generateAudioPaths(audioPath);
-        
-        for (const tryPath of possiblePaths) {
-            const blob = this.resourceMap.get(tryPath);
-            if (blob) {
-                console.log('找到音频资源:', tryPath);
-                return URL.createObjectURL(blob);
-            }
-        }
-        
-        // 如果没找到，尝试搜索文件名
-        const fileName = audioPath.split('/').pop();
-        if (fileName) {
-            for (const [path, blob] of this.resourceMap.entries()) {
-                if (path.includes(fileName)) {
-                    console.log('通过文件名搜索找到音频:', path);
-                    return URL.createObjectURL(blob);
-                }
-            }
-        }
-        
-        console.error('音频文件不存在:', audioPath);
-        console.log('可用的音频文件:', 
-            Array.from(this.resourceMap.entries())
-                .filter(([path, blob]) => path.match(/\.(mp3|wav|ogg|m4a)$/i))
-                .map(([path]) => path)
-        );
-        
-        throw new Error(`音频文件不存在: ${audioPath}`);
-    }
-    
-    toggleAudio() {
-        if (!this.currentAudio || !this.isAudioReady) return;
-        this.isPlaying ? this.pauseAudio() : this.playAudio();
-    }
-    
-    async playAudio() {
-        if (!this.currentAudio || !this.isAudioReady) return;
-        
-        try {
-            await this.safePlayAudio(this.currentAudio);
-            this.isPlaying = true;
-            this.playPauseBtn.textContent = '⏸';
-        } catch (error) {
-            console.warn('播放失败:', error);
-            this.isPlaying = false;
-            this.playPauseBtn.textContent = '▶';
-        }
-    }
-    
-    pauseAudio() {
-        if (!this.currentAudio) return;
-        this.currentAudio.pause();
-        this.isPlaying = false;
-        this.playPauseBtn.textContent = '▶';
-        this.clearHighlights();
-    }
-    
-    togglePlayPause() {
-        this.isPlaying ? this.pauseAudio() : this.playAudio();
-    }
-    
-    updateProgress() {
-        if (!this.currentAudio) return;
-        const progress = (this.currentAudio.currentTime / this.currentAudio.duration) * 100;
-        this.progress.style.width = `${progress}%`;
-        this.currentTimeSpan.textContent = this.formatTime(this.currentAudio.currentTime);
-    }
-    
-    seekAudio(e) {
-        if (!this.currentAudio) return;
-        const rect = this.progressBar.getBoundingClientRect();
-        const percent = (e.clientX - rect.left) / rect.width;
-        this.currentAudio.currentTime = percent * this.currentAudio.duration;
-        
-        this.highlightCurrentText();
-    }
-    
-    changePlaybackRate(rate) {
-        if (this.currentAudio) {
-            this.currentAudio.playbackRate = parseFloat(rate);
-        }
-    }
-    
-    audioEnded() {
-        this.isPlaying = false;
-        this.playPauseBtn.textContent = '▶';
-        this.progress.style.width = '0%';
-        this.currentTimeSpan.textContent = '0:00';
-        this.clearHighlights();
-    }
-    
-    formatTime(seconds) {
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-    }
-    
-    prevChapter() {
-        if (this.currentChapterIndex > 0) {
-            this.stopAllAudio();
-            this.loadChapter(this.currentChapterIndex - 1);
-        }
-    }
-    
-    nextChapter() {
-        if (this.currentChapterIndex < this.chapters.length - 1) {
-            this.stopAllAudio();
-            this.loadChapter(this.currentChapterIndex + 1);
-        }
     }
 }
 

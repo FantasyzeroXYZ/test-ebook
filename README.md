@@ -1,1 +1,3 @@
 # test-ebook
+epubjs@0.3.93
+jszip@3.10.1
