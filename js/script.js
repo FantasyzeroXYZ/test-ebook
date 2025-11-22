@@ -4,16 +4,10 @@ class EPUBReader {
         this.currentChapterIndex = 0;
         this.chapters = [];
         this.resourceMap = new Map();
-        this.dictionaryButton = null;
-        this.dictionaryModal = null;
-        this.lastSelectionTime = 0;
-        this.isSelecting = false;
-        this.dictionaryButtonTimeout = null;
-        this.viewMode = 'scroll';
+        this.viewMode = 'paged'; // 只保留分页模式
         this.currentSectionIndex = 0;
         this.sections = [];
         this.selectionToolbar = null;
-        this.lookupWordBtn = null;
         this.selectedText = '';
         this.selectionTimeout = null;
         this.touchStartTime = 0;
@@ -29,12 +23,11 @@ class EPUBReader {
             wordField: '',
             meaningField: '',
             sentenceField: '',
-            audioField: '',
-            tagsField: ''
+            tagsField: 'epub-reader'
         };
         
-        // 新增属性
-        this.navigationMap = []; // 真正的目录结构
+        this.navigationMap = [];
+        this.isDarkMode = false;
         
         this.initializeUI();
     }
@@ -56,6 +49,7 @@ class EPUBReader {
         this.prevPageBtn = document.getElementById('prevPage');
         this.nextPageBtn = document.getElementById('nextPage');
         this.uploadBtn = document.getElementById('uploadBtn');
+        this.toggleThemeBtn = document.getElementById('toggleTheme');
         
         // 边缘点击区域
         this.leftEdgeTapArea = document.getElementById('leftEdgeTapArea');
@@ -67,8 +61,6 @@ class EPUBReader {
         this.closeSettingsBtn = document.getElementById('closeSettings');
         
         // 设置控件
-        this.viewModeSelect = document.getElementById('viewMode');
-        this.autoScroll = document.getElementById('autoScroll');
         this.fontSize = document.getElementById('fontSize');
         this.theme = document.getElementById('theme');
         this.offlineMode = document.getElementById('offlineMode');
@@ -85,7 +77,6 @@ class EPUBReader {
         this.ankiWordField = document.getElementById('ankiWordField');
         this.ankiMeaningField = document.getElementById('ankiMeaningField');
         this.ankiSentenceField = document.getElementById('ankiSentenceField');
-        this.ankiAudioField = document.getElementById('ankiAudioField');
         this.ankiTagsField = document.getElementById('ankiTagsField');
         this.saveAnkiSettingsBtn = document.getElementById('saveAnkiSettings');
         
@@ -120,20 +111,18 @@ class EPUBReader {
         this.prevPageBtn.addEventListener('click', () => this.prevPage());
         this.nextPageBtn.addEventListener('click', () => this.nextPage());
         this.uploadBtn.addEventListener('click', (e) => {
-            e.stopPropagation(); // 阻止事件冒泡
+            e.stopPropagation();
             this.fileInput.click();
         });
+        
+        // 主题切换
+        this.toggleThemeBtn.addEventListener('click', () => this.toggleDarkMode());
         
         // 设置按钮事件
         this.toggleSettingsBtn.addEventListener('click', () => this.toggleSettings());
         this.closeSettingsBtn.addEventListener('click', () => this.toggleSettings());
         
         // 设置控件事件
-        this.viewModeSelect.addEventListener('change', (e) => {
-            this.switchViewMode(e.target.value);
-            this.saveSettings();
-        });
-        this.autoScroll.addEventListener('change', () => this.saveSettings());
         this.fontSize.addEventListener('change', () => {
             this.saveSettings();
             this.applyFontSize();
@@ -153,17 +142,22 @@ class EPUBReader {
         
         // 上传区域事件
         this.uploadArea.addEventListener('click', (e) => {
-            e.stopPropagation(); // 阻止事件冒泡
+            e.stopPropagation();
             this.fileInput.click();
         });
         this.fileInput.addEventListener('change', (e) => {
-            console.log('文件选择事件触发');
             this.handleFileSelect(e);
         });
         
         // 边缘点击翻页事件
-        this.leftEdgeTapArea.addEventListener('click', () => this.prevPage());
-        this.rightEdgeTapArea.addEventListener('click', () => this.nextPage());
+        this.leftEdgeTapArea.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.prevPage();
+        });
+        this.rightEdgeTapArea.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.nextPage();
+        });
         
         // 查词相关事件
         this.closeModalBtn.addEventListener('click', () => this.hideDictionaryModal());
@@ -193,13 +187,14 @@ class EPUBReader {
 
         // 字段选择事件
         const fieldSelectors = [
-            this.ankiWordField, this.ankiMeaningField, 
-            this.ankiSentenceField, this.ankiAudioField, this.ankiTagsField
+            this.ankiWordField, this.ankiMeaningField, this.ankiSentenceField
         ];
 
         fieldSelectors.forEach(select => {
             select.addEventListener('change', () => this.saveAnkiSettings());
         });
+
+        this.ankiTagsField.addEventListener('input', () => this.saveAnkiSettings());
         
         // 拖拽上传事件
         this.uploadArea.addEventListener('dragover', (e) => {
@@ -225,29 +220,32 @@ class EPUBReader {
         
         // 窗口大小变化事件
         window.addEventListener('resize', () => this.handleResize());
+
+        // 阻止词典弹窗内的选择事件
+        this.dictionaryModal.addEventListener('mousedown', (e) => e.stopPropagation());
+        this.dictionaryModal.addEventListener('touchstart', (e) => e.stopPropagation());
     }
 
     // 初始化设置分组折叠功能
     initializeSettingGroups() {
         const groupHeaders = document.querySelectorAll('.setting-group-header');
         groupHeaders.forEach(header => {
+            // 默认全部折叠
+            header.classList.add('collapsed');
+            
             header.addEventListener('click', () => {
                 header.classList.toggle('collapsed');
             });
-            // 默认全部折叠
-            header.classList.add('collapsed');
         });
     }
 
     // 窗口大小变化处理
     handleResize() {
-        if (this.viewMode === 'paged' && this.chapters.length > 0) {
-            // 防抖处理，避免频繁重新分页
+        if (this.chapters.length > 0) {
             clearTimeout(this.resizeTimeout);
             this.resizeTimeout = setTimeout(() => {
                 const currentChapter = this.chapters[this.currentChapterIndex];
                 if (currentChapter) {
-                    console.log('窗口大小变化，重新分页...');
                     this.splitChapterIntoPages(currentChapter.content);
                 }
             }, 250);
@@ -271,13 +269,28 @@ class EPUBReader {
                 this.hideDictionaryModal();
                 this.hideSelectionToolbar();
                 break;
+            case 'd':
+            case 'D':
+                if (e.ctrlKey) {
+                    e.preventDefault();
+                    this.toggleDarkMode();
+                }
+                break;
         }
+    }
+
+    // 切换夜间模式
+    toggleDarkMode() {
+        this.isDarkMode = !this.isDarkMode;
+        document.body.classList.toggle('dark-mode', this.isDarkMode);
+        this.toggleThemeBtn.innerHTML = this.isDarkMode ? 
+            '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        this.saveSettings();
     }
 
     // 设置相关方法
     toggleSettings() {
         this.settingsSidebar.classList.toggle('open');
-        
         if (this.settingsSidebar.classList.contains('open')) {
             this.sidebar.classList.remove('open');
         }
@@ -286,26 +299,28 @@ class EPUBReader {
     loadSettings() {
         const settings = JSON.parse(localStorage.getItem('epubReaderSettings') || '{}');
         
-        this.viewModeSelect.value = settings.viewMode || 'scroll';
-        this.autoScroll.checked = settings.autoScroll || false;
         this.fontSize.value = settings.fontSize || 'medium';
         this.theme.value = settings.theme || 'light';
         this.offlineMode.checked = settings.offlineMode || false;
         this.syncProgress.checked = settings.syncProgress !== false;
+        this.isDarkMode = settings.darkMode || false;
+        
+        // 应用设置
+        document.body.classList.toggle('dark-mode', this.isDarkMode);
+        this.toggleThemeBtn.innerHTML = this.isDarkMode ? 
+            '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         
         this.applyFontSize();
         this.applyTheme();
-        this.switchViewMode(this.viewModeSelect.value);
     }
 
     saveSettings() {
         const settings = {
-            viewMode: this.viewModeSelect.value,
-            autoScroll: this.autoScroll.checked,
             fontSize: this.fontSize.value,
             theme: this.theme.value,
             offlineMode: this.offlineMode.checked,
-            syncProgress: this.syncProgress.checked
+            syncProgress: this.syncProgress.checked,
+            darkMode: this.isDarkMode
         };
         
         localStorage.setItem('epubReaderSettings', JSON.stringify(settings));
@@ -398,14 +413,13 @@ class EPUBReader {
         this.ankiPort.value = this.ankiSettings.port;
         this.ankiDeck.value = this.ankiSettings.deck;
         this.ankiModel.value = this.ankiSettings.model;
+        this.ankiTagsField.value = this.ankiSettings.tagsField || 'epub-reader';
         
         this.restoreFieldSelections();
         
         if (this.ankiSettings.host && this.ankiSettings.port) {
             setTimeout(() => {
-                this.testAnkiConnection().then(() => {
-                    console.log('Anki连接测试完成');
-                });
+                this.testAnkiConnection();
             }, 1000);
         }
     }
@@ -419,7 +433,6 @@ class EPUBReader {
             wordField: this.ankiWordField.value,
             meaningField: this.ankiMeaningField.value,
             sentenceField: this.ankiSentenceField.value,
-            audioField: this.ankiAudioField.value,
             tagsField: this.ankiTagsField.value
         };
         
@@ -465,7 +478,6 @@ class EPUBReader {
     async loadAnkiDecks() {
         try {
             const decks = await this.ankiRequest('deckNames', {});
-            console.log('加载到的牌组:', decks);
             
             const currentDeck = this.ankiDeck.value;
             
@@ -492,7 +504,6 @@ class EPUBReader {
     async loadAnkiModels() {
         try {
             const models = await this.ankiRequest('modelNames', {});
-            console.log('加载到的模板:', models);
             
             const currentModel = this.ankiModel.value;
             
@@ -527,7 +538,6 @@ class EPUBReader {
                 modelName: modelName 
             });
             
-            console.log('加载到的字段:', fields);
             this.currentModelFields = fields;
             this.updateFieldSelectors(fields);
             
@@ -545,9 +555,7 @@ class EPUBReader {
         const fieldSelectors = [
             this.ankiWordField,
             this.ankiMeaningField,
-            this.ankiSentenceField,
-            this.ankiAudioField,
-            this.ankiTagsField
+            this.ankiSentenceField
         ];
         
         fieldSelectors.forEach(select => {
@@ -599,24 +607,6 @@ class EPUBReader {
                 this.ankiMeaningField.selectedIndex = 2;
             }
         }
-        
-        if (!this.ankiSettings.audioField) {
-            if (fieldMap.includes('audio')) {
-                this.ankiAudioField.value = 'audio';
-            } else if (fieldMap.includes('sound')) {
-                this.ankiAudioField.value = 'sound';
-            } else if (fields.length > 3) {
-                this.ankiAudioField.selectedIndex = 3;
-            }
-        }
-        
-        if (!this.ankiSettings.tagsField) {
-            if (fieldMap.includes('tags')) {
-                this.ankiTagsField.value = 'tags';
-            } else if (fields.length > 4) {
-                this.ankiTagsField.selectedIndex = 4;
-            }
-        }
     }
 
     restoreFieldSelections() {
@@ -628,12 +618,6 @@ class EPUBReader {
         }
         if (this.ankiSettings.sentenceField) {
             this.ankiSentenceField.value = this.ankiSettings.sentenceField;
-        }
-        if (this.ankiSettings.audioField) {
-            this.ankiAudioField.value = this.ankiSettings.audioField;
-        }
-        if (this.ankiSettings.tagsField) {
-            this.ankiTagsField.value = this.ankiSettings.tagsField;
         }
     }
 
@@ -671,7 +655,6 @@ class EPUBReader {
     }
 
     async addToAnki() {
-        // 检查连接状态
         if (!this.ankiConnected) {
             const connected = await this.testAnkiConnection();
             if (!connected) {
@@ -680,7 +663,6 @@ class EPUBReader {
             }
         }
 
-        // 确保有选中的文本
         if (!this.selectedText) {
             this.showToast('没有选中的文本');
             return;
@@ -696,21 +678,17 @@ class EPUBReader {
             return;
         }
 
-        // 验证必要字段
         if (!this.ankiSettings.wordField || !this.ankiSettings.sentenceField) {
             this.showToast('请配置单词字段和句子字段!');
             return;
         }
 
-        // 保存原始按钮状态
         const originalHTML = this.addToAnkiBtn.innerHTML;
         this.addToAnkiBtn.disabled = true;
         this.addToAnkiBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 添加中...';
 
         try {
-            // 恢复选择范围以确保音频处理能正常工作
             this.restoreSelection();
-            
             await this.processAnkiCard();
             this.showToast('✅ 单词已成功添加到Anki!');
             this.hideDictionaryModal();
@@ -725,10 +703,7 @@ class EPUBReader {
 
     async processAnkiCard() {
         const word = this.selectedText.trim();
-        
         const sentence = this.getWordSentence(word);
-        console.log('句子字段内容:', sentence);
-        
         const definition = this.getWordDefinition();
         
         const note = {
@@ -739,18 +714,12 @@ class EPUBReader {
                 [this.ankiSettings.sentenceField]: sentence
             },
             options: { allowDuplicate: false },
-            tags: ['epub-reader']
+            tags: this.ankiSettings.tagsField.split(',').map(tag => tag.trim()).filter(tag => tag)
         };
         
         if (this.ankiSettings.meaningField && definition) {
             note.fields[this.ankiSettings.meaningField] = definition;
         }
-        
-        if (this.ankiSettings.tagsField) {
-            note.fields[this.ankiSettings.tagsField] = 'epub-reader';
-        }
-        
-        console.log('准备添加到Anki的笔记:', note);
         
         await this.addCardToAnki(note);
     }
@@ -776,7 +745,6 @@ class EPUBReader {
             const range = this.savedSelectionRange;
             let elementWithId = range.startContainer.parentElement;
             
-            // 向上查找有ID的元素
             while (elementWithId && !elementWithId.id && elementWithId.parentElement) {
                 elementWithId = elementWithId.parentElement;
             }
@@ -786,13 +754,10 @@ class EPUBReader {
             }
             
             const elementId = elementWithId.id;
-            
-            // 从DOM中获取该ID元素的完整文本内容
             const textElement = document.getElementById(elementId);
             if (textElement) {
                 const fullText = textElement.textContent || textElement.innerText;
                 const cleanedText = this.cleanSentenceText(fullText);
-                console.log('获取的完整句子:', cleanedText);
                 return cleanedText || selectedText;
             }
             
@@ -806,34 +771,28 @@ class EPUBReader {
 
     cleanSentenceText(text) {
         return text
-            .replace(/<[^>]*>/g, '') // 移除HTML标签
-            .replace(/\s+/g, ' ') // 合并多余空格
-            .replace(/[\r\n\t]/g, ' ') // 替换换行和制表符
-            .replace(/^[^a-zA-Z]*/, '') // 移除开头的非字母字符
-            .replace(/[^a-zA-Z0-9\.!?]*$/, '') // 移除结尾的非字母数字和标点
+            .replace(/<[^>]*>/g, '')
+            .replace(/\s+/g, ' ')
+            .replace(/[\r\n\t]/g, ' ')
+            .replace(/^[^a-zA-Z]*/, '')
+            .replace(/[^a-zA-Z0-9\.!?]*$/, '')
             .trim();
     }
 
     async addCardToAnki(note) {
-        console.log('准备添加卡片到 Anki:', note);
-
         try {
             const result = await this.ankiRequest('addNote', { note });
             
             if (result) {
-                console.log('✅ 卡片添加成功，ID:', result);
                 return result;
             } else {
-                console.warn('AnkiConnect 返回空结果，可能未创建卡片');
                 throw new Error('卡片创建失败');
             }
             
         } catch (error) {
             if (error.message.includes('duplicate')) {
-                console.warn('检测到重复卡片，跳过添加');
                 throw new Error('已存在相同卡片');
             } else {
-                console.error('添加卡片失败:', error);
                 throw error;
             }
         }
@@ -848,8 +807,36 @@ class EPUBReader {
         });
         
         document.addEventListener('touchstart', (e) => {
+            // 如果在边缘区域，允许长按选择
+            if (e.target.closest('.edge-tap-area')) {
+                this.touchStartTime = Date.now();
+                this.touchStartTarget = e.target;
+                return;
+            }
+            
             if (!this.selectionToolbar.contains(e.target)) {
                 this.hideSelectionToolbar();
+            }
+        });
+
+        document.addEventListener('touchmove', (e) => {
+            // 如果开始触摸在边缘区域，但在移动，取消长按选择
+            if (this.touchStartTarget && e.target !== this.touchStartTarget) {
+                this.touchStartTarget = null;
+            }
+        });
+
+        document.addEventListener('touchend', (e) => {
+            if (this.touchStartTarget) {
+                const touchDuration = Date.now() - this.touchStartTime;
+                // 长按超过500ms在边缘区域也允许选择
+                if (touchDuration > 500) {
+                    this.touchStartTarget = null;
+                    setTimeout(() => {
+                        this.handleSelectionChange(e);
+                    }, 100);
+                }
+                this.touchStartTarget = null;
             }
         });
 
@@ -858,6 +845,9 @@ class EPUBReader {
         });
 
         const preventContextMenu = (e) => {
+            if (e.target.closest('.dictionary-modal')) {
+                return;
+            }
             e.preventDefault();
             e.stopPropagation();
             return false;
@@ -868,15 +858,6 @@ class EPUBReader {
             this.readerContent.addEventListener('contextmenu', preventContextMenu);
             this.readerContent.addEventListener('touchstart', (e) => {
                 this.touchStartTime = Date.now();
-            });
-            
-            this.readerContent.addEventListener('touchend', (e) => {
-                const touchDuration = Date.now() - this.touchStartTime;
-                if (touchDuration > 500) {
-                    setTimeout(() => {
-                        this.handleSelectionChange();
-                    }, 100);
-                }
             });
         }
 
@@ -902,10 +883,14 @@ class EPUBReader {
     }
 
     handleSelectionChange(e) {
+        // 如果词典弹窗显示，不处理选择事件
+        if (this.dictionaryModal.classList.contains('show')) {
+            this.hideSelectionToolbar();
+            return;
+        }
+
         const selection = window.getSelection();
         const selectedText = selection.toString().trim();
-        
-        console.log('选中的文本:', selectedText, '长度:', selectedText.length);
         
         if (this.selectionTimeout) {
             clearTimeout(this.selectionTimeout);
@@ -916,15 +901,6 @@ class EPUBReader {
             
             this.selectionTimeout = setTimeout(() => {
                 this.showSelectionToolbar(selection);
-                
-                if (/Android/i.test(navigator.userAgent)) {
-                    setTimeout(() => {
-                        if (e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                        }
-                    }, 50);
-                }
             }, 150);
         } else {
             this.hideSelectionToolbar();
@@ -958,15 +934,16 @@ class EPUBReader {
         const toolbarRect = this.selectionToolbar.getBoundingClientRect();
         
         let finalX = toolbarX - toolbarRect.width / 2;
-        let finalY = toolbarY - toolbarRect.height - 10;
+        let finalY = toolbarY - toolbarRect.height - 5; // 减少距离
         
+        // 边界检查
         if (finalX < 10) finalX = 10;
         if (finalX + toolbarRect.width > viewportWidth - 10) {
             finalX = viewportWidth - toolbarRect.width - 10;
         }
         
         if (finalY < 10) {
-            finalY = toolbarY + rect.height + 10;
+            finalY = toolbarY + rect.height + 5;
         }
         
         if (finalY + toolbarRect.height > viewportHeight - 10) {
@@ -975,29 +952,16 @@ class EPUBReader {
         
         this.selectionToolbar.style.left = finalX + 'px';
         this.selectionToolbar.style.top = finalY + 'px';
-        this.selectionToolbar.style.transform = 'translateY(-110%)';
+        this.selectionToolbar.style.transform = 'translateY(-100%)';
         
         this.selectionToolbar.classList.add('show');
         
-        console.log('显示自定义工具栏，选中文本:', this.selectedText, '位置:', finalX, finalY);
-        
         // 保存选择范围
         this.saveCurrentSelection();
-        
-        if (/Android/i.test(navigator.userAgent)) {
-            document.addEventListener('contextmenu', this.preventAndroidToolbar, { once: true });
-        }
-    }
-
-    preventAndroidToolbar(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        return false;
     }
 
     lookupWord() {
         if (!this.selectedText) {
-            // 如果没有保存的选中文本，尝试从当前选择中获取
             const selection = window.getSelection();
             this.selectedText = selection.toString().trim();
         }
@@ -1009,9 +973,6 @@ class EPUBReader {
         
         this.hideSelectionToolbar();
         this.showDictionaryModal();
-        
-        // 不清除选择，保留选择状态用于后续处理
-        // window.getSelection().removeAllRanges();
     }
 
     highlightText() {
@@ -1029,7 +990,6 @@ class EPUBReader {
             window.getSelection().removeAllRanges();
             this.showToast('文本已高亮');
         } catch (e) {
-            console.warn('无法高亮此选择:', e);
             this.showToast('无法高亮此文本');
         }
     }
@@ -1042,7 +1002,6 @@ class EPUBReader {
             window.getSelection().removeAllRanges();
             this.showToast('文本已复制到剪贴板');
         }).catch(err => {
-            console.error('复制失败:', err);
             const textArea = document.createElement('textarea');
             textArea.value = this.selectedText;
             document.body.appendChild(textArea);
@@ -1093,58 +1052,19 @@ class EPUBReader {
         }, 3000);
     }
 
-    switchViewMode(mode) {
-        if (this.viewMode === mode) return;
-        
-        this.viewMode = mode;
-        
-        if (this.currentChapterIndex !== undefined && this.chapters.length > 0) {
-            this.loadChapter(this.currentChapterIndex);
-        }
-    }
-
     loadChapter(index) {
-        console.log('加载章节:', index);
-        if (index < 0 || index >= this.chapters.length) {   
-            console.error('章节索引超出范围:', index);
-            return;
-        }
+        if (index < 0 || index >= this.chapters.length) return;
         
         this.currentChapterIndex = index;
         const chapter = this.chapters[index];
-
-        console.log('当前章节信息:', {
-            title: chapter.title,
-            contentLength: chapter.content.length
-        });
         
-        if (this.viewMode === 'scroll') {
-            console.log('使用滚动模式显示内容');
-            this.pageContent.innerHTML = chapter.content;
-            this.pageContent.className = 'page-content scroll-mode';
-            this.currentPageSpan.textContent = (index + 1).toString();
-            this.totalPagesSpan.textContent = this.chapters.length;
-        } else {
-            console.log('使用分页模式显示内容');
-            this.splitChapterIntoPages(chapter.content);
-            this.pageContent.className = 'page-content paged-mode';
-            this.currentPageSpan.textContent = '1';
-            this.totalPagesSpan.textContent = this.sections.length;
-        }
-
-        // 检查页面内容是否成功显示
-        setTimeout(() => {
-            console.log('页面内容检查:', {
-                innerHTML: this.pageContent.innerHTML.length,
-                childNodes: this.pageContent.childNodes.length,
-                textContent: this.pageContent.textContent?.substring(0, 100)
-            });
-        }, 100);
+        this.splitChapterIntoPages(chapter.content);
+        this.pageContent.className = 'page-content paged-mode';
+        this.currentPageSpan.textContent = '1';
+        this.totalPagesSpan.textContent = this.sections.length;
         
         this.updateTOCHighlight();
-        
         this.bindSelectionEventsToNewContent();
-        
         this.pageContent.scrollTop = 0;
     }
 
@@ -1157,26 +1077,11 @@ class EPUBReader {
                 e.stopPropagation();
                 return false;
             });
-            
-            element.addEventListener('touchstart', (e) => {
-                this.touchStartTime = Date.now();
-            });
-            
-            element.addEventListener('touchend', (e) => {
-                const touchDuration = Date.now() - this.touchStartTime;
-                if (touchDuration > 400) {
-                    setTimeout(() => {
-                        this.handleSelectionChange(e);
-                    }, 100);
-                }
-            });
         });
     }
 
     splitChapterIntoPages(content) {
-        // 如果已经是分页模式且内容没有变化，不需要重新分页
         if (this.sections.length > 0 && this.lastContent === content) {
-            console.log('内容未变化，跳过重新分页');
             return;
         }
         
@@ -1184,7 +1089,6 @@ class EPUBReader {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = content;
         
-        // 应用相同的样式
         tempDiv.style.cssText = `
             position: absolute;
             left: -9999px;
@@ -1196,7 +1100,6 @@ class EPUBReader {
             box-sizing: border-box;
         `;
         
-        // 复制页面内容的样式
         const pageStyles = window.getComputedStyle(this.pageContent);
         tempDiv.style.fontSize = pageStyles.fontSize;
         tempDiv.style.lineHeight = pageStyles.lineHeight;
@@ -1206,15 +1109,13 @@ class EPUBReader {
         
         const container = this.pageContent;
         const containerHeight = container.offsetHeight;
-        const containerWidth = container.offsetWidth - 40; // 考虑padding
+        const containerWidth = container.offsetWidth - 40;
         
         this.sections = [];
         
-        // 获取所有需要分页的元素
         const elements = this.getPageElements(tempDiv);
         
         if (elements.length === 0) {
-            // 如果没有子元素，直接使用整个内容
             this.sections.push(content);
         } else {
             let currentPageElements = [];
@@ -1223,24 +1124,19 @@ class EPUBReader {
             for (let element of elements) {
                 const elementInfo = this.getElementInfo(element, containerWidth);
                 
-                // 如果当前页已经有内容，并且添加这个元素会超出容器高度
                 if (currentHeight > 0 && currentHeight + elementInfo.totalHeight > containerHeight - 40) {
-                    // 保存当前页
                     this.savePageSection(currentPageElements);
                     currentPageElements = [];
                     currentHeight = 0;
                 }
                 
-                // 如果单个元素本身就超过容器高度
                 if (elementInfo.totalHeight > containerHeight - 40) {
-                    // 如果当前页有内容，先保存当前页
                     if (currentPageElements.length > 0) {
                         this.savePageSection(currentPageElements);
                         currentPageElements = [];
                         currentHeight = 0;
                     }
                     
-                    // 处理超大元素：尝试分割
                     const splitElements = this.splitLargeElement(element, containerHeight - 40, containerWidth);
                     currentPageElements.push(...splitElements);
                     currentHeight = this.calculateElementsHeight(currentPageElements, containerWidth);
@@ -1250,27 +1146,22 @@ class EPUBReader {
                 }
             }
             
-            // 添加最后一页
             if (currentPageElements.length > 0) {
                 this.savePageSection(currentPageElements);
             }
         }
         
-        // 清理临时元素
         document.body.removeChild(tempDiv);
         
         if (this.sections.length === 0) {
             this.sections.push(content);
         }
         
-        console.log('分页结果:', this.sections.length, '页');
-        
         this.renderPagedContent();
         this.currentSectionIndex = 0;
         this.showSection(0);
     }
 
-    // 保存页面部分
     savePageSection(elements) {
         const sectionHTML = elements.map(el => el.outerHTML).join('');
         this.sections.push(sectionHTML);
@@ -1283,7 +1174,6 @@ class EPUBReader {
             NodeFilter.SHOW_ELEMENT,
             {
                 acceptNode: function(node) {
-                    // 包含常见的文本容器元素
                     if (['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'UL', 'OL', 'LI', 'TABLE', 'FIGURE'].includes(node.tagName)) {
                         return NodeFilter.FILTER_ACCEPT;
                     }
@@ -1321,12 +1211,7 @@ class EPUBReader {
         
         document.body.removeChild(temp);
         
-        return {
-            height,
-            marginTop,
-            marginBottom,
-            totalHeight
-        };
+        return { height, marginTop, marginBottom, totalHeight };
     }
 
     calculateElementsHeight(elements, containerWidth) {
@@ -1355,14 +1240,11 @@ class EPUBReader {
 
     splitLargeElement(element, maxHeight, containerWidth) {
         const elements = [];
-        const elementType = element.tagName.toLowerCase();
         
         if (this.isTextElement(element)) {
-            // 对于文本元素，按段落或句子分割
             const chunks = this.splitTextElement(element, maxHeight, containerWidth);
             elements.push(...chunks);
         } else {
-            // 对于其他元素，直接添加并在需要时添加继续标记
             elements.push(element.cloneNode(true));
             if (this.getElementInfo(element, containerWidth).totalHeight > maxHeight) {
                 const continueMarker = document.createElement('div');
@@ -1381,24 +1263,20 @@ class EPUBReader {
         return elements;
     }
 
-    // 判断是否为文本元素
     isTextElement(element) {
         return ['p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(element.tagName.toLowerCase());
     }
 
-    // 分割文本元素
     splitTextElement(element, maxHeight, containerWidth) {
         const elements = [];
         const originalHTML = element.innerHTML;
         const className = element.className;
         const style = element.style.cssText;
         
-        // 如果是空元素，直接返回
         if (!element.textContent.trim()) {
             return [element.cloneNode(true)];
         }
         
-        // 先尝试按段落分割
         const paragraphs = originalHTML.split(/<\/p>\s*<p[^>]*>/i);
         if (paragraphs.length > 1) {
             for (let i = 0; i < paragraphs.length; i++) {
@@ -1416,7 +1294,6 @@ class EPUBReader {
                 pElement.innerHTML = paragraph;
                 
                 if (this.getElementInfo(pElement, containerWidth).totalHeight > maxHeight) {
-                    // 如果段落还是太大，进一步分割
                     const chunks = this.splitBySentences(pElement, maxHeight, containerWidth);
                     elements.push(...chunks);
                 } else {
@@ -1424,7 +1301,6 @@ class EPUBReader {
                 }
             }
         } else {
-            // 没有段落，按句子分割
             const chunks = this.splitBySentences(element, maxHeight, containerWidth);
             elements.push(...chunks);
         }
@@ -1432,7 +1308,6 @@ class EPUBReader {
         return elements;
     }
 
-    // 按句子分割
     splitBySentences(element, maxHeight, containerWidth) {
         const elements = [];
         const text = element.textContent || '';
@@ -1440,7 +1315,6 @@ class EPUBReader {
         const style = element.style.cssText;
         const tagName = element.tagName.toLowerCase();
         
-        // 按句子分割（简单的分割规则）
         const sentences = text.split(/([.!?])\s+/);
         let currentChunk = [];
         let currentHTML = '';
@@ -1460,21 +1334,18 @@ class EPUBReader {
             document.body.removeChild(tempElement);
             
             if (height > maxHeight && currentChunk.length > 1) {
-                // 当前块已经超过高度，保存之前的块（不包括当前句子）
-                currentChunk.pop(); // 移除最后一个句子
+                currentChunk.pop();
                 const chunkElement = document.createElement(tagName);
                 chunkElement.className = className;
                 chunkElement.style.cssText = style;
                 chunkElement.textContent = currentChunk.join(' ');
                 elements.push(chunkElement);
                 
-                // 开始新的块
                 currentChunk = [sentence];
                 currentHTML = sentence + ' ';
             }
         }
         
-        // 添加最后一个块
         if (currentChunk.length > 0) {
             const chunkElement = document.createElement(tagName);
             chunkElement.className = className;
@@ -1517,9 +1388,6 @@ class EPUBReader {
         this.pageContent.innerHTML = '';
         this.pageContent.appendChild(pagedContainer);
         
-        console.log('渲染分页内容完成，共', this.sections.length, '页');
-        
-        // 重新绑定事件
         this.bindSelectionEventsToNewContent();
     }
 
@@ -1540,47 +1408,29 @@ class EPUBReader {
 
     toggleSidebar() {
         this.sidebar.classList.toggle('open');
-        
         if (this.sidebar.classList.contains('open')) {
             this.settingsSidebar.classList.remove('open');
         }
     }
     
     prevPage() {
-        if (this.viewMode === 'scroll') {
-            if (this.currentChapterIndex > 0) {
-                this.loadChapter(this.currentChapterIndex - 1);
-            }
-        } else {
-            if (this.currentSectionIndex > 0) {
-                this.showSection(this.currentSectionIndex - 1);
-            } else if (this.currentChapterIndex > 0) {
-                this.loadChapter(this.currentChapterIndex - 1);
-            }
+        if (this.currentSectionIndex > 0) {
+            this.showSection(this.currentSectionIndex - 1);
+        } else if (this.currentChapterIndex > 0) {
+            this.loadChapter(this.currentChapterIndex - 1);
         }
     }
     
     nextPage() {
-        if (this.viewMode === 'scroll') {
-            if (this.currentChapterIndex < this.chapters.length - 1) {
-                this.loadChapter(this.currentChapterIndex + 1);
-            }
-        } else {
-            if (this.currentSectionIndex < this.sections.length - 1) {
-                this.showSection(this.currentSectionIndex + 1);
-            } else if (this.currentChapterIndex < this.chapters.length - 1) {
-                this.loadChapter(this.currentChapterIndex + 1);
-            }
+        if (this.currentSectionIndex < this.sections.length - 1) {
+            this.showSection(this.currentSectionIndex + 1);
+        } else if (this.currentChapterIndex < this.chapters.length - 1) {
+            this.loadChapter(this.currentChapterIndex + 1);
         }
     }
     
     showDictionaryModal() {
-        console.log('显示词典弹窗，选中文本:', this.selectedText);
-        
         this.hideSelectionToolbar();
-        
-        // 不清除选择，保留选择状态
-        // window.getSelection().removeAllRanges();
         
         this.dictionaryModal.classList.add('show');
         this.dictionaryOverlay.classList.add('show');
@@ -1593,7 +1443,6 @@ class EPUBReader {
             </div>
         `;
         
-        // 保存当前选择范围，防止丢失
         this.saveCurrentSelection();
         
         this.fetchDictionaryData(this.selectedText)
@@ -1604,7 +1453,6 @@ class EPUBReader {
             .catch(error => this.displayDictionaryError(error));
     }
 
-    // 保存当前选择范围
     saveCurrentSelection() {
         const selection = window.getSelection();
         if (selection.rangeCount > 0) {
@@ -1612,7 +1460,6 @@ class EPUBReader {
         }
     }
 
-    // 恢复选择范围
     restoreSelection() {
         if (this.savedSelectionRange) {
             const selection = window.getSelection();
@@ -1632,7 +1479,6 @@ class EPUBReader {
             const data = await response.json();
             return data;
         } catch (error) {
-            console.error('词典API请求失败:', error);
             throw new Error('网络请求失败，请检查网络连接');
         }
     }
@@ -1699,11 +1545,9 @@ class EPUBReader {
         this.dictionaryOverlay.classList.remove('show');
         this.dictionaryFooter.style.display = 'none';
         
-        // 清除保存的选择范围
         this.savedSelectionRange = null;
         this.currentWordData = null;
         
-        // 最终清除选择
         window.getSelection().removeAllRanges();
     }
     
@@ -1714,57 +1558,45 @@ class EPUBReader {
         }
     }
     
-    // 使用epub.js加载EPUB文件
     async loadEPUB(file) {
         try {
-            console.log('开始加载EPUB文件:', file.name);
             this.uploadArea.innerHTML = '<div class="loader"></div><p>正在解析EPUB文件...</p>';
             
-            // 使用epub.js创建书籍对象
             this.book = ePub(file);
             
-            // 等待书籍加载完成
             await new Promise((resolve, reject) => {
                 this.book.ready.then(resolve).catch(reject);
             });
             
-            // 获取书籍元数据
             const metadata = await this.book.loaded.metadata;
             const title = metadata.title || '未知标题';
             const creator = metadata.creator || '未知作者';
             
-            // 获取书籍导航
             const navigation = await this.book.loaded.navigation;
             
-            // 获取书籍目录
             this.chapters = [];
             this.navigationMap = navigation.toc || [];
             
-            // 创建rendition来获取内容
             const rendition = this.book.renderTo("pageContent", {
                 width: "100%",
                 height: "100%"
             });
             
-            // 使用spine顺序构建章节
             const spine = this.book.spine;
             
             for (let i = 0; i < spine.length; i++) {
                 const item = spine.get(i);
                 
-                if (item && item.linear !== false) { // 只处理linear项目
+                if (item && item.linear !== false) {
                     try {
-                        // 使用rendition.display来获取章节内容
                         await rendition.display(item.href);
                         
-                        // 获取渲染后的内容
                         const iframe = document.querySelector("#pageContent iframe");
                         let content = '';
                         
                         if (iframe && iframe.contentDocument) {
                             content = iframe.contentDocument.body.innerHTML;
                         } else {
-                            // 备用方法：直接使用section
                             const section = await this.book.load(item.href);
                             if (section.render) {
                                 content = await section.render();
@@ -1773,7 +1605,6 @@ class EPUBReader {
                             }
                         }
                         
-                        // 查找章节标题
                         let chapterTitle = `第${i + 1}章`;
                         for (const navItem of this.navigationMap) {
                             if (navItem.href === item.href) {
@@ -1782,7 +1613,6 @@ class EPUBReader {
                             }
                         }
                         
-                        // 处理内容中的资源
                         content = await this.processContentImages(content, item.href);
                         
                         this.chapters.push({
@@ -1793,7 +1623,6 @@ class EPUBReader {
                         });
                         
                     } catch (e) {
-                        console.warn(`无法加载章节: ${item.href}`, e);
                         this.chapters.push({
                             id: item.id,
                             title: `第${i + 1}章`,
@@ -1804,7 +1633,6 @@ class EPUBReader {
                 }
             }
             
-            // 销毁rendition
             rendition.destroy();
             
             if (this.chapters.length === 0) {
@@ -1815,7 +1643,6 @@ class EPUBReader {
             this.initializeBook();
             
         } catch (error) {
-            console.error('加载EPUB文件失败:', error);
             this.uploadArea.innerHTML = `
                 <div class="upload-icon">❌</div>
                 <h3>加载失败</h3>
@@ -1825,64 +1652,45 @@ class EPUBReader {
         }
     }
                 
-    // 处理章节内容中的图片
     async processContentImages(content, baseHref) {
         try {
-            console.log('开始处理内容图片，baseHref:', baseHref);
-            
             if (!content || content.trim() === '') {
-                console.warn('内容为空');
                 return content;
             }
             
             const parser = new DOMParser();
             const doc = parser.parseFromString(content, 'text/html');
             
-            // 检查解析结果
             if (doc.querySelector('parsererror')) {
-                console.error('HTML解析错误，返回原始内容');
                 return content;
             }
             
-            // 处理图片
             const images = doc.querySelectorAll('img');
-            console.log('找到图片数量:', images.length);
             
             for (const img of images) {
                 const src = img.getAttribute('src');
-                console.log('处理图片:', src);
                 
                 if (src && !src.startsWith('data:')) {
                     try {
-                        // 使用epub.js的URL创建方法
                         const url = this.book.path.resolve(src, baseHref);
-                        console.log('解析后的图片URL:', url);
-                        
                         const blob = await this.book.load(url);
                         
                         if (blob) {
                             const blobUrl = URL.createObjectURL(blob);
                             img.src = blobUrl;
-                            console.log('图片加载成功:', src);
-                        } else {
-                            console.warn('无法获取图片blob:', src);
                         }
                     } catch (e) {
-                        console.warn('图片加载失败:', src, e);
                         img.style.backgroundColor = '#f0f0f0';
                         img.alt = '图片加载失败: ' + src;
                     }
                 }
             }
             
-            // 处理链接
             const links = doc.querySelectorAll('a[href]');
-            console.log('找到链接数量:', links.length);
             
             links.forEach(link => {
                 const href = link.getAttribute('href');
                 if (href && !href.startsWith('#') && !href.startsWith('http')) {
-                    // 将相对链接转换为绝对路径
                     const fullPath = this.book.path.resolve(href, baseHref);
                     link.setAttribute('data-href', fullPath);
                     link.addEventListener('click', (e) => {
@@ -1892,20 +1700,14 @@ class EPUBReader {
                 }
             });
             
-            const processedContent = doc.body.innerHTML;
-            console.log('内容处理完成，长度:', processedContent.length);
-            return processedContent;
+            return doc.body.innerHTML;
             
         } catch (error) {
-            console.error('处理内容图片时出错:', error);
-            return content; // 返回原始内容作为后备
+            return content;
         }
     }
 
     handleInternalLink(href) {
-        console.log('处理内部链接:', href);
-        
-        // 查找对应的章节
         for (let i = 0; i < this.chapters.length; i++) {
             const chapter = this.chapters[i];
             if (chapter.href === href) {
@@ -1914,25 +1716,21 @@ class EPUBReader {
             }
         }
         
-        // 如果没有找到匹配的章节，尝试加载新章节
         this.loadNewChapter(href)
             .then(chapter => {
                 this.chapters.push(chapter);
                 this.loadChapter(this.chapters.length - 1);
             })
             .catch(error => {
-                console.error('加载链接内容失败:', error);
                 this.showToast('无法加载链接内容');
             });
     }
 
-    // 加载新章节
     async loadNewChapter(href) {
         try {
             const section = await this.book.load(href);
             let content = section.content || '';
             
-            // 处理章节中的图片
             content = await this.processContentImages(content, href);
             
             return {
@@ -1961,10 +1759,8 @@ class EPUBReader {
         this.tocContainer.innerHTML = '';
         
         if (this.navigationMap.length > 0) {
-            // 使用真正的目录结构
             this.renderNavigationTree(this.navigationMap, this.tocContainer);
         } else {
-            // 使用章节顺序
             this.chapters.forEach((chapter, index) => {
                 const tocItem = document.createElement('div');
                 tocItem.className = 'toc-item';
@@ -1987,7 +1783,6 @@ class EPUBReader {
             tocItem.style.paddingLeft = `${10 + level * 20}px`;
             tocItem.textContent = item.label;
             
-            // 查找对应的章节索引
             const chapterIndex = this.findChapterIndexByHref(item.href);
             
             if (chapterIndex !== -1) {
@@ -2004,7 +1799,6 @@ class EPUBReader {
             
             container.appendChild(tocItem);
             
-            // 递归渲染子项目
             if (item.subitems && item.subitems.length > 0) {
                 this.renderNavigationTree(item.subitems, container, level + 1);
             }
@@ -2040,7 +1834,6 @@ class EPUBReader {
         }
     }
 
-    // 辅助方法
     getBasePath(filePath) {
         return filePath.includes('/') 
             ? filePath.substring(0, filePath.lastIndexOf('/') + 1)

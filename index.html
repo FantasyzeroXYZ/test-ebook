@@ -19,12 +19,10 @@
                     <i class="fas fa-cog"></i>
                 </button>
             </div>
-            <div class="book-info">
-                <div id="bookTitle" class="book-title">EPUB阅读器</div>
-                <div id="bookAuthor" class="book-author">选择EPUB文件开始阅读</div>
-            </div>
             <div class="nav-right">
-                <!-- 移除了自动播放按钮 -->
+                <button id="toggleTheme" class="btn">
+                    <i class="fas fa-moon"></i>
+                </button>
             </div>
         </div>
 
@@ -47,11 +45,15 @@
             <div class="reader-container">
                 <div id="swipeContainer" class="reader-content" style="display: none;">
                     <!-- 边缘点击区域 -->
-                    <div id="leftEdgeTapArea" class="edge-tap-area left-edge-tap"></div>
-                    <div id="rightEdgeTapArea" class="edge-tap-area right-edge-tap"></div>
+                    <div id="leftEdgeTapArea" class="edge-tap-area left-edge-tap">
+                        <div class="tap-indicator"></div>
+                    </div>
+                    <div id="rightEdgeTapArea" class="edge-tap-area right-edge-tap">
+                        <div class="tap-indicator"></div>
+                    </div>
                     
                     <!-- 页面内容 -->
-                    <div id="pageContent" class="page-content scroll-mode">
+                    <div id="pageContent" class="page-content paged-mode">
                         <!-- 页面内容将通过JavaScript动态生成 -->
                     </div>
                 </div>
@@ -86,17 +88,6 @@
                         <div class="setting-group-header">阅读设置</div>
                         <div class="setting-group-content">
                             <div class="setting-item">
-                                <label for="viewMode">阅读模式</label>
-                                <select id="viewMode">
-                                    <option value="scroll">滚动模式</option>
-                                    <option value="paged">分页模式</option>
-                                </select>
-                            </div>
-                            <div class="setting-item checkbox">
-                                <input type="checkbox" id="autoScroll">
-                                <label for="autoScroll">自动滚动</label>
-                            </div>
-                            <div class="setting-item">
                                 <label for="fontSize">字体大小</label>
                                 <select id="fontSize">
                                     <option value="small">小</option>
@@ -115,8 +106,6 @@
                             </div>
                         </div>
                     </div>
-
-                    <!-- 移除了音频设置分组 -->
 
                     <!-- 数据管理 -->
                     <div class="setting-group">
@@ -183,16 +172,8 @@
                                 </select>
                             </div>
                             <div class="setting-item">
-                                <label for="ankiAudioField">音频字段</label>
-                                <select id="ankiAudioField">
-                                    <option value="">选择字段</option>
-                                </select>
-                            </div>
-                            <div class="setting-item">
-                                <label for="ankiTagsField">标签字段</label>
-                                <select id="ankiTagsField">
-                                    <option value="">选择字段</option>
-                                </select>
+                                <label for="ankiTagsField">标签</label>
+                                <input type="text" id="ankiTagsField" placeholder="输入标签，用逗号分隔">
                             </div>
                             <div class="action-buttons">
                                 <button id="saveAnkiSettings" class="action-btn primary-btn">保存设置</button>
@@ -214,8 +195,6 @@
                     <i class="fas fa-chevron-right"></i>
                 </button>
             </div>
-
-            <!-- 移除了音频控制栏 -->
         </div>
     </div>
 
