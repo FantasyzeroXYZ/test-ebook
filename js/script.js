@@ -743,22 +743,28 @@ class EPUBReader {
             }
             
             const range = this.savedSelectionRange;
-            let elementWithId = range.startContainer.parentElement;
             
-            while (elementWithId && !elementWithId.id && elementWithId.parentElement) {
-                elementWithId = elementWithId.parentElement;
+            // 获取包含选中文本的段落
+            let paragraph = range.startContainer.parentElement;
+            while (paragraph && paragraph.nodeType === Node.ELEMENT_NODE && 
+                   !['P', 'DIV', 'SECTION', 'ARTICLE', 'BLOCKQUOTE'].includes(paragraph.tagName) &&
+                   paragraph.parentElement) {
+                paragraph = paragraph.parentElement;
             }
             
-            if (!elementWithId || !elementWithId.id) {
-                return selectedText;
-            }
-            
-            const elementId = elementWithId.id;
-            const textElement = document.getElementById(elementId);
-            if (textElement) {
-                const fullText = textElement.textContent || textElement.innerText;
-                const cleanedText = this.cleanSentenceText(fullText);
-                return cleanedText || selectedText;
+            if (paragraph && paragraph.textContent) {
+                // 获取完整的段落文本
+                const fullParagraph = paragraph.textContent.trim();
+                
+                // 查找选中文本在段落中的位置
+                const selectedIndex = fullParagraph.indexOf(selectedText);
+                if (selectedIndex !== -1) {
+                    // 尝试截取完整的句子
+                    const sentence = this.extractCompleteSentence(fullParagraph, selectedIndex, selectedText.length);
+                    return sentence || fullParagraph;
+                }
+                
+                return fullParagraph;
             }
             
             return selectedText;
@@ -767,6 +773,29 @@ class EPUBReader {
             console.error('获取句子失败:', error);
             return selectedText;
         }
+    }
+
+    extractCompleteSentence(text, selectionStart, selectionLength) {
+        // 查找句子开始位置
+        let sentenceStart = 0;
+        for (let i = selectionStart - 1; i >= 0; i--) {
+            if (['.', '!', '?', '\n'].includes(text[i])) {
+                sentenceStart = i + 1;
+                break;
+            }
+        }
+        
+        // 查找句子结束位置
+        let sentenceEnd = text.length;
+        for (let i = selectionStart + selectionLength; i < text.length; i++) {
+            if (['.', '!', '?', '\n'].includes(text[i])) {
+                sentenceEnd = i + 1;
+                break;
+            }
+        }
+        
+        const sentence = text.substring(sentenceStart, sentenceEnd).trim();
+        return sentence || text;
     }
 
     cleanSentenceText(text) {
@@ -1561,6 +1590,11 @@ class EPUBReader {
     async loadEPUB(file) {
         try {
             this.uploadArea.innerHTML = '<div class="loader"></div><p>正在解析EPUB文件...</p>';
+            
+            // 修复：使用正确的ePub库加载方式
+            if (typeof ePub === 'undefined') {
+                throw new Error('ePub库未加载，请检查脚本引入');
+            }
             
             this.book = ePub(file);
             
