@@ -107,6 +107,25 @@
                         </div>
                     </div>
 
+                    <!-- 音频播放设置 -->
+                    <div class="setting-group">
+                        <div class="setting-group-header">音频播放</div>
+                        <div class="setting-group-content">
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="autoPlayAudio" checked>
+                                <label for="autoPlayAudio">自动播放音频</label>
+                            </div>
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="syncTextHighlight" checked>
+                                <label for="syncTextHighlight">同步文本高亮</label>
+                            </div>
+                            <div class="setting-item">
+                                <label for="audioVolume">音量</label>
+                                <input type="range" id="audioVolume" min="0" max="100" value="80">
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 数据管理 -->
                     <div class="setting-group">
                         <div class="setting-group-header">数据管理</div>
@@ -186,6 +205,41 @@
 
         <!-- 底部控制栏 -->
         <div class="bottom-controls">
+            <!-- 音频播放器 -->
+            <div id="audioPlayer" class="audio-player">
+                <div class="audio-controls">
+                    <button id="audioPlayPause" class="audio-btn">
+                        <i class="fas fa-play"></i>
+                    </button>
+                    <button id="audioStop" class="audio-btn">
+                        <i class="fas fa-stop"></i>
+                    </button>
+                    <button id="audioRewind" class="audio-btn">
+                        <i class="fas fa-backward"></i>
+                    </button>
+                    <button id="audioForward" class="audio-btn">
+                        <i class="fas fa-forward"></i>
+                    </button>
+                    
+                    <div class="audio-info">
+                        <div id="audioTitle" class="audio-title">未加载音频</div>
+                        <div class="audio-progress">
+                            <span id="currentTime">00:00</span>
+                            <input type="range" id="audioProgress" class="audio-progress-bar" min="0" max="100" value="0">
+                            <span id="duration">00:00</span>
+                        </div>
+                    </div>
+                    
+                    <div class="audio-volume">
+                        <button id="audioMute" class="audio-btn">
+                            <i class="fas fa-volume-up"></i>
+                        </button>
+                        <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="80">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 页面控制 -->
             <div class="page-controls">
                 <button id="prevPage" class="btn">
                     <i class="fas fa-chevron-left"></i>
@@ -234,8 +288,8 @@
     </div>
 
     <!-- 引入epub.js库 -->
-    <script src="lib/jszip.min.js"></script>
-    <script src="lib/epub.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
     <script src="js/script.js"></script>
 </body>
 </html>
