@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EPUB阅读器</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部导航栏 -->
+        <div class="top-nav">
+            <div class="nav-left">
+                <button id="toggleSidebar" class="btn">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <button id="toggleSettings" class="btn">
+                    <i class="fas fa-cog"></i>
+                </button>
+            </div>
+            <div class="nav-right">
+                <button id="toggleTheme" class="btn">
+                    <i class="fas fa-moon"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 主内容区域 -->
+        <div class="main-content">
+            <!-- 侧边栏 -->
+            <div id="sidebar" class="sidebar">
+                <div class="sidebar-header">
+                    <h3>目录</h3>
+                    <button id="closeSidebar" class="btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div id="tocContainer" class="sidebar-content">
+                    <!-- 目录内容将通过JavaScript动态生成 -->
+                </div>
+            </div>
+
+            <!-- 阅读区域 -->
+            <div class="reader-container">
+                <div id="swipeContainer" class="reader-content" style="display: none;">
+                    <!-- 边缘点击区域 -->
+                    <div id="leftEdgeTapArea" class="edge-tap-area left-edge-tap">
+                        <div class="tap-indicator"></div>
+                    </div>
+                    <div id="rightEdgeTapArea" class="edge-tap-area right-edge-tap">
+                        <div class="tap-indicator"></div>
+                    </div>
+                    
+                    <!-- 页面内容 -->
+                    <div id="pageContent" class="page-content paged-mode">
+                        <!-- 页面内容将通过JavaScript动态生成 -->
+                    </div>
+                </div>
+
+                <!-- 上传区域 -->
+                <div id="uploadContainer" class="upload-container">
+                    <div id="uploadArea" class="upload-area">
+                        <div class="upload-icon">
+                            <i class="fas fa-book-open"></i>
+                        </div>
+                        <div class="upload-text">
+                            <h3>上传EPUB文件</h3>
+                            <p>拖放EPUB文件到此处，或点击选择文件</p>
+                            <button id="uploadBtn" class="action-btn primary-btn">选择文件</button>
+                        </div>
+                    </div>
+                    <input type="file" id="fileInput" accept=".epub" style="display: none;">
+                </div>
+            </div>
+
+            <!-- 设置侧边栏 -->
+            <div id="settingsSidebar" class="settings-sidebar">
+                <div class="settings-header">
+                    <h3>设置</h3>
+                    <button id="closeSettings" class="btn">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="settings-content">
+                    <!-- 阅读设置 -->
+                    <div class="setting-group">
+                        <div class="setting-group-header">阅读设置</div>
+                        <div class="setting-group-content">
+                            <div class="setting-item">
+                                <label for="fontSize">字体大小</label>
+                                <select id="fontSize">
+                                    <option value="small">小</option>
+                                    <option value="medium" selected>中</option>
+                                    <option value="large">大</option>
+                                    <option value="xlarge">特大</option>
+                                </select>
+                            </div>
+                            <div class="setting-item">
+                                <label for="theme">主题</label>
+                                <select id="theme">
+                                    <option value="light" selected>浅色</option>
+                                    <option value="dark">深色</option>
+                                    <option value="sepia">护眼</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 音频播放设置 -->
+                    <div class="setting-group">
+                        <div class="setting-group-header">音频播放</div>
+                        <div class="setting-group-content">
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="autoPlayAudio" checked>
+                                <label for="autoPlayAudio">自动播放音频</label>
+                            </div>
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="syncTextHighlight" checked>
+                                <label for="syncTextHighlight">同步文本高亮</label>
+                            </div>
+                            <div class="setting-item">
+                                <label for="audioVolume">音量</label>
+                                <input type="range" id="audioVolume" min="0" max="100" value="80">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 数据管理 -->
+                    <div class="setting-group">
+                        <div class="setting-group-header">数据管理</div>
+                        <div class="setting-group-content">
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="offlineMode">
+                                <label for="offlineMode">离线模式</label>
+                            </div>
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="syncProgress" checked>
+                                <label for="syncProgress">同步阅读进度</label>
+                            </div>
+                            <div class="action-buttons">
+                                <button id="exportData" class="action-btn secondary-btn">导出数据</button>
+                                <button id="clearData" class="action-btn secondary-btn">清除数据</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Anki设置 -->
+                    <div class="setting-group">
+                        <div class="setting-group-header">Anki设置</div>
+                        <div class="setting-group-content">
+                            <div class="setting-item">
+                                <label for="ankiHost">主机地址</label>
+                                <input type="text" id="ankiHost" value="127.0.0.1">
+                            </div>
+                            <div class="setting-item">
+                                <label for="ankiPort">端口</label>
+                                <input type="number" id="ankiPort" value="8765">
+                            </div>
+                            <div class="action-buttons">
+                                <button id="testAnkiConnection" class="action-btn secondary-btn">测试连接</button>
+                            </div>
+                            <div class="setting-item">
+                                <label for="ankiDeck">牌组</label>
+                                <select id="ankiDeck">
+                                    <option value="">选择牌组</option>
+                                </select>
+                            </div>
+                            <div class="setting-item">
+                                <label for="ankiModel">模板</label>
+                                <select id="ankiModel">
+                                    <option value="">选择模板</option>
+                                </select>
+                            </div>
+                            <div class="setting-item">
+                                <label for="ankiWordField">单词字段</label>
+                                <select id="ankiWordField">
+                                    <option value="">选择字段</option>
+                                </select>
+                            </div>
+                            <div class="setting-item">
+                                <label for="ankiMeaningField">释义字段</label>
+                                <select id="ankiMeaningField">
+                                    <option value="">选择字段</option>
+                                </select>
+                            </div>
+                            <div class="setting-item">
+                                <label for="ankiSentenceField">句子字段</label>
+                                <select id="ankiSentenceField">
+                                    <option value="">选择字段</option>
+                                </select>
+                            </div>
+                            <div class="setting-item">
+                                <label for="ankiTagsField">标签</label>
+                                <input type="text" id="ankiTagsField" placeholder="输入标签，用逗号分隔">
+                            </div>
+                            <div class="action-buttons">
+                                <button id="saveAnkiSettings" class="action-btn primary-btn">保存设置</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部控制栏 -->
+        <div class="bottom-controls">
+            <!-- 音频播放器 -->
+            <div id="audioPlayer" class="audio-player">
+                <div class="audio-controls">
+                    <button id="audioPlayPause" class="audio-btn">
+                        <i class="fas fa-play"></i>
+                    </button>
+                    <button id="audioStop" class="audio-btn">
+                        <i class="fas fa-stop"></i>
+                    </button>
+                    <button id="audioRewind" class="audio-btn">
+                        <i class="fas fa-backward"></i>
+                    </button>
+                    <button id="audioForward" class="audio-btn">
+                        <i class="fas fa-forward"></i>
+                    </button>
+                    
+                    <div class="audio-info">
+                        <div id="audioTitle" class="audio-title">未加载音频</div>
+                        <div class="audio-progress">
+                            <span id="currentTime">00:00</span>
+                            <input type="range" id="audioProgress" class="audio-progress-bar" min="0" max="100" value="0">
+                            <span id="duration">00:00</span>
+                        </div>
+                    </div>
+                    
+                    <div class="audio-volume">
+                        <button id="audioMute" class="audio-btn">
+                            <i class="fas fa-volume-up"></i>
+                        </button>
+                        <input type="range" id="volumeSlider" class="volume-slider" min="0" max="100" value="80">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 页面控制 -->
+            <div class="page-controls">
+                <button id="prevPage" class="btn">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <span id="currentPage">1</span> / <span id="totalPages">1</span>
+                <button id="nextPage" class="btn">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 词典弹窗 -->
+    <div id="dictionaryModal" class="dictionary-modal">
+        <div class="dictionary-header">
+            <h3>词典</h3>
+            <button id="closeModal" class="btn">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div id="dictionaryContent" class="dictionary-content">
+            <!-- 词典内容将通过JavaScript动态生成 -->
+        </div>
+        <div id="dictionaryFooter" class="dictionary-footer">
+            <button id="addToAnkiBtn" class="action-btn primary-btn">
+                <i class="fas fa-plus"></i> 添加到Anki
+            </button>
+        </div>
+    </div>
+    <div id="dictionaryOverlay" class="dictionary-overlay"></div>
+
+    <!-- 选择工具栏 -->
+    <div id="selectionToolbar" class="selection-toolbar">
+        <button id="lookupWordBtn" title="查词">
+            <i class="fas fa-book"></i>
+        </button>
+        <button id="highlightBtn" title="高亮">
+            <i class="fas fa-highlighter"></i>
+        </button>
+        <button id="copyBtn" title="复制">
+            <i class="fas fa-copy"></i>
+        </button>
+        <button id="shareBtn" title="分享">
+            <i class="fas fa-share-alt"></i>
+        </button>
+    </div>
+
+    <!-- 引入epub.js库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
+    <script src="js/script.js"></script>
+</body>
+</html>
