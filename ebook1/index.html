@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Epub.js Media Overlay Player - 最终修复 V14 (移除错误的 goTo 调用)</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
+    
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        #controls { text-align: center; margin-bottom: 20px; }
+        #viewer { width: 80%; height: 500px; margin: 20px auto; border: 1px solid #ccc; }
+        .data-box { background: #f4f4f4; padding: 15px; border: 1px dashed #aaa; margin-top: 10px; max-height: 400px; overflow-y: auto; }
+        .mo-active { 
+            background-color: #ffda6a; 
+            padding: 1px 3px; 
+            border-radius: 3px;
+            box-shadow: 0 0 5px rgba(255, 218, 106, 0.5);
+            transition: all 0.3s ease;
+        }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; }
+        .warning { color: orange; }
+        button { padding: 10px 20px; margin: 0 5px; cursor: pointer; }
+        
+        #viewer .epub-container {
+            line-height: 1.6;
+            padding: 20px;
+        }
+        
+        .progress-container {
+            width: 80%;
+            margin: 10px auto;
+            background: #f0f0f0;
+            border-radius: 10px;
+            height: 8px;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #4CAF50;
+            border-radius: 10px;
+            width: 0%;
+            transition: width 0.1s ease;
+        }
+
+        .file-input-wrapper {
+            margin: 20px 0;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🎙️ EPUB3 Media Overlay Player (最终优化版 V14)</h1>
+
+    <div class="file-input-wrapper">
+        <input type="file" id="epub-file" accept=".epub">
+        <button id="load-btn">加载EPUB文件</button>
+    </div>
+
+    <div id="controls">
+        <button id="play-pause-btn">▶️ 播放 / 暂停</button>
+        <button id="stop-btn">⏹️ 停止</button>
+        <button id="seek-back-btn">⏪ 快退10秒</button>
+        <button id="seek-forward-btn">⏩ 快进10秒</button>
+        <p>当前状态: <span id="player-status">未加载</span> | 片段: <span id="current-fragment-id">N/A</span></p>
+        <div class="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        <p id="time-display">00:00 / 00:00</p>
+    </div>
+
+    <div id="viewer"></div>
+
+    <div class="data-box" id="info-output">请选择并加载EPUB文件...</div>
+
+    <script>
+        // --- 全局变量 ---
+        const HIGHLIGHT_CLASS = 'mo-active'; 
+        
+        let book;
+        let rendition;
+        let player;
+
+        // --- MediaOverlayPlayer类 ---
+        class MediaOverlayPlayer {
+            constructor(book, rendition, infoOutput) {
+                this.book = book;
+                this.rendition = rendition;
+                this.infoOutput = infoOutput;
+                this.queue = [];      
+                this.currentIndex = -1;
+                this.isPlaying = false;
+                this.audioElement = new Audio();
+                this.activeClass = HIGHLIGHT_CLASS;
+                
+                this.audioElement.ontimeupdate = this.updateCurrentHighlight.bind(this);
+                this.audioElement.onended = () => {
+                    this.isPlaying = false;
+                    this.updateStatus("✅ 播放结束");
+                };
+                
+                this.currentAudioFile = null;
+                this.audioGroups = new Map();
+            }
+
+            // --- 时间格式转换 ---
+            timeToSeconds(timeStr) {
+                if (!timeStr) return 0;
+                if (timeStr.endsWith('s')) {
+                    return parseFloat(timeStr.slice(0, -1));
+                }
+                const parts = timeStr.split(':').map(parseFloat);
+                if (parts.length === 3) {
+                    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+                }
+                return parseFloat(timeStr); 
+            }
+
+            // --- 核心初始化 ---
+            async initialize() {
+                this.updateStatus("正在解析 EPUB 结构...");
+                
+                try {
+                    await this.book.ready;
+                    
+                    const [metadata, manifest, spine, navigation] = await Promise.all([
+                        this.book.loaded.metadata,
+                        this.book.loaded.manifest,
+                        this.book.loaded.spine,
+                        this.book.loaded.navigation
+                    ]);
+                    
+                    this.activeClass = metadata.media_active_class || HIGHLIGHT_CLASS;
+                    this.updateInfo('<span class="success">✅ 元数据加载成功</span>');
+                    this.updateInfo('- 书名: ' + (metadata.title || '未知'));
+                    this.updateInfo('- 作者: ' + (metadata.creator || '未知'));
+                    
+                    const smilItems = Object.values(manifest).filter(item => 
+                        item && 
+                        (
+                            item.type === 'application/smil+xml' || 
+                            item.type === 'application/smil' ||
+                            (item.href && (item.href.includes('.smil') || (item.id && item.id.includes('smil'))))
+                        )
+                    );
+                    
+                    this.updateInfo('- 找到 ' + smilItems.length + ' 个SMIL文件');
+                    
+                    if (smilItems.length === 0) {
+                        this.updateStatus("❌ 未找到SMIL文件", 'error');
+                        return;
+                    }
+                    
+                    smilItems.forEach((item, index) => {
+                        this.updateInfo('&nbsp;&nbsp;' + (index + 1) + '. ' + item.href + ' (ID: ' + item.id + ')');
+                    });
+                    
+                    await this.buildPlaybackQueue(smilItems); 
+                    
+                    if (this.queue.length === 0) {
+                        this.updateStatus("❌ 无法解析有效的媒体覆盖数据", 'error');
+                        return;
+                    }
+
+                    this.updateStatus('✅ 加载完成，找到 ' + this.queue.length + ' 个同步片段');
+                    
+                    this.audioGroups = this.groupFragmentsByAudio();
+                    this.updateInfo('<strong>音频文件统计:</strong>');
+                    this.audioGroups.forEach((fragments, audioFile) => {
+                        this.updateInfo('- ' + audioFile + ': ' + fragments.length + ' 个片段');
+                    });
+                    
+                    const firstFragment = this.queue[0];
+                    if (firstFragment) {
+                        await this.displayFragmentPage(firstFragment);
+                    }
+
+                } catch (error) {
+                    this.updateStatus('❌ 初始化失败: ' + error.message, 'error');
+                    console.error("Player Initialization Error:", error);
+                }
+            }
+            
+            // --- 构建播放队列 (并行处理) ---
+            async buildPlaybackQueue(smilItems) { 
+                this.queue = [];
+                this.updateInfo('<strong>=== 开始并行处理SMIL文件 (速度优化) ===</strong>');
+                
+                const processingPromises = smilItems.map(smilItem => this.processSingleSmilFile(smilItem));
+
+                const results = await Promise.allSettled(processingPromises);
+
+                let totalFragments = 0;
+                
+                results.forEach(result => {
+                    if (result.status === 'fulfilled' && result.value) {
+                        totalFragments += result.value.fragmentsAdded;
+                        this.queue.push(...result.value.fragments);
+                        this.updateInfo(`✅ 添加了 ${result.value.fragmentsAdded} 个片段 (SMIL: ${result.value.smilHref})`);
+                    } else if (result.status === 'rejected') {
+                        const error = result.reason;
+                        this.updateInfo(`<span class="error">❌ 处理失败: ${error.message}</span>`);
+                    }
+                });
+
+                this.updateInfo('<h3>🎉 完成! 总共收集到 ' + totalFragments + ' 个同步片段</h3>');
+            }
+
+            // --- 处理单个 SMIL 文件的函数 ---
+            async processSingleSmilFile(smilItem) {
+                this.updateInfo('正在读取: ' + smilItem.href);
+                
+                try {
+                    const absolutePath = this.resolveSmilPath(smilItem.href);
+                    const content = await this.book.archive.getText(absolutePath);
+                    
+                    if (!content) {
+                        throw new Error('SMIL 文件内容读取失败。');
+                    }
+                    
+                    const fragments = [];
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(content, "application/xml");
+                    
+                    const parseError = xmlDoc.getElementsByTagName("parsererror")[0];
+                    if (parseError) {
+                        throw new Error('XML解析错误: ' + parseError.textContent);
+                    }
+                    
+                    const parElements = xmlDoc.getElementsByTagName('par');
+                    
+                    let fragmentsAdded = 0;
+                    
+                    for (let par of parElements) {
+                        const textElements = par.getElementsByTagName('text');
+                        const audioElements = par.getElementsByTagName('audio');
+                        
+                        if (textElements.length > 0 && audioElements.length > 0) {
+                            const text = textElements[0];
+                            const audio = audioElements[0];
+                            
+                            let textSrc = text.getAttribute('src');
+                            let audioSrc = audio.getAttribute('src');
+                            const clipBegin = audio.getAttribute('clipBegin') || audio.getAttribute('clip-begin');
+                            const clipEnd = audio.getAttribute('clipEnd') || audio.getAttribute('clip-end');
+                            
+                            if (textSrc && audioSrc) {
+                                // resolvePath 现在返回带斜杠的绝对路径
+                                const resolvedTextSrc = this.resolvePath(textSrc, smilItem.href);
+                                const resolvedAudioSrc = this.resolvePath(audioSrc, smilItem.href);
+                                
+                                fragments.push({
+                                    textSrc: resolvedTextSrc,
+                                    audioSrc: resolvedAudioSrc,
+                                    clipBegin: clipBegin,
+                                    clipEnd: clipEnd,
+                                    originalIndex: fragmentsAdded,
+                                    smilFile: smilItem.href
+                                });
+                                
+                                fragmentsAdded++;
+                                
+                                if (fragmentsAdded <= 3) {
+                                    this.updateInfo(`&nbsp;&nbsp;&nbsp;&nbsp;片段 ${fragmentsAdded} (SMIL: ${smilItem.href}): ${textSrc} -> ${audioSrc}`);
+                                }
+                            }
+                        }
+                    }
+                    
+                    return { 
+                        fragments, 
+                        fragmentsAdded,
+                        smilHref: smilItem.href
+                    };
+                    
+                } catch (error) {
+                    throw new Error(`SMIL文件 ${smilItem.href} 处理失败: ${error.message}`);
+                }
+            }
+
+            // --- SMIL 路径解析 (返回相对于 EPUB 根目录，带 '/') ---
+            resolveSmilPath(smilPath) {
+                if (smilPath.startsWith('/')) {
+                    return smilPath;
+                }
+                
+                const packagePath = this.book.container.packagePath;
+                if (!packagePath) {
+                    return '/' + smilPath;
+                }
+                
+                // 获取 OPF 文件所在的目录，并附加 SMIL 路径
+                let baseDir = packagePath.includes('/') 
+                    ? packagePath.substring(0, packagePath.lastIndexOf('/') + 1)
+                    : '';
+                
+                // V13 修复: 确保返回的路径是绝对路径
+                let finalPath = baseDir + smilPath;
+                if (!finalPath.startsWith('/')) {
+                    finalPath = '/' + finalPath;
+                }
+                
+                return finalPath;
+            }
+
+            // --- 核心路径解析方法 (返回相对于 EPUB 根目录的路径，带 '/') ---
+            resolvePath(relativePath, baseFile) {
+                if (!relativePath) return '';
+                
+                // 1. 如果路径已是绝对路径 (带斜杠)，直接返回
+                if (relativePath.startsWith('/')) {
+                    return relativePath;
+                }
+
+                // 2. 获取基准目录
+                const baseDir = baseFile.substring(0, baseFile.lastIndexOf('/') + 1);
+                
+                let fullPath = baseDir + relativePath;
+
+                // 3. 处理相对路径 (.. 和 .)
+                const pathParts = fullPath.split('/');
+                const resolvedParts = [];
+                
+                for (const part of pathParts) {
+                    if (part === '..') {
+                        if (resolvedParts.length > 0 && resolvedParts[resolvedParts.length - 1] !== '..') {
+                            resolvedParts.pop();
+                        }
+                    } else if (part !== '.' && part !== '') {
+                        resolvedParts.push(part);
+                    }
+                }
+                
+                // 4. 强制添加前导斜杠，返回绝对路径
+                let finalPath = '/' + resolvedParts.join('/');
+
+                if (finalPath.startsWith('//')) {
+                    finalPath = finalPath.substring(1);
+                }
+                
+                return finalPath;
+            }
+
+            // --- 音频文件分组 ---
+            groupFragmentsByAudio() {
+                const groups = new Map();
+                
+                this.queue.forEach((fragment, index) => {
+                    const audioFile = fragment.audioSrc;
+                    if (!groups.has(audioFile)) {
+                        groups.set(audioFile, []);
+                    }
+                    groups.get(audioFile).push({
+                        ...fragment,
+                        originalIndex: index
+                    });
+                });
+                
+                return groups;
+            }
+
+            // --- 音频URL获取方法 (【最终修复 V13】路径修复，依赖 resolvePath 返回绝对路径) ---
+            async getAudioUrl(audioPath) {
+                // audioPath 现在是带前导斜杠的路径 (e.g., /OEBPS/Audio/00000-00001.mp4 或 /Audio/...)
+                let internalPath = audioPath.startsWith('/') ? audioPath.substring(1) : audioPath;
+                
+                // 1. 初始化路径尝试列表
+                const pathsToTest = [];
+
+                // 2. 添加原始解析结果 (绝对路径和相对路径)
+                pathsToTest.push('/' + internalPath); // /OEBPS/Audio/...
+                pathsToTest.push(internalPath); // OEBPS/Audio/...
+
+                // 3. 清理路径（如果 internalPath 包含 OEBPS/ 或 OPS/，尝试去除）
+                let cleanedPath = internalPath;
+                if (cleanedPath.toLowerCase().startsWith('oebps/') || cleanedPath.toLowerCase().startsWith('ops/')) {
+                    const parts = cleanedPath.split('/');
+                    parts.shift(); // 移除 OEBPS 或 OPS
+                    cleanedPath = parts.join('/');
+                    pathsToTest.push(cleanedPath); // Audio/...
+                    pathsToTest.push('/' + cleanedPath); // /Audio/...
+                }
+                
+                // 4. 路径猜测：增加 OPS/ OEBPS/ 前缀 (以防原始解析未包含)
+                const primaryPrefixes = ['OEBPS', 'OPS'];
+                for (const prefix of primaryPrefixes) {
+                    // a) OEBPS/Audio/... (不带斜杠，EPUB内部精确键名)
+                    if (!internalPath.startsWith(prefix + '/')) {
+                        pathsToTest.push(prefix + '/' + internalPath); 
+                        // b) /OEBPS/Audio/... (带斜杠，绝对路径形式)
+                        pathsToTest.push('/' + prefix + '/' + internalPath); 
+                    }
+                }
+
+                // 5. 进行所有路径的尝试
+                const finalPaths = [...new Set(pathsToTest)]; // 去重
+
+                for (const pathForArchive of finalPaths) {
+                    
+                    this.updateInfo(`   尝试获取音频: ${pathForArchive}`); 
+
+                    // --- 尝试 Blob 获取 (优先) ---
+                    try {
+                        const blob = await this.book.archive.getBlob(pathForArchive); 
+                        const url = URL.createObjectURL(blob);
+                        this.updateInfo(`✅ 音频URL获取成功 (Blob): ${pathForArchive}`);
+                        return url;
+                    } catch (error) {
+                        // 忽略 Blob 失败
+                    }
+                }
+                
+                // 6. 如果所有尝试都失败，抛出错误
+                throw new Error('File not found in the epub: ' + internalPath);
+            }
+
+            // --- 显示片段页面 (【V14 修正】修复 goTo 错误) ---
+            async displayFragmentPage(fragment) {
+                try {
+                    // fragment.textSrc 是带ID的绝对路径 (e.g., /OEBPS/Text/chap.html#id)
+                    const htmlPathWithId = fragment.textSrc;
+                    const htmlPath = htmlPathWithId.split('#')[0]; // /OEBPS/Text/chap.html
+                    
+                    // Epub.js Rendition display 方法接受相对路径 (不带斜杠) 或 manifest/spine 中的 href
+                    // 我们需要传递一个不带斜杠的路径给 spine.get
+                    const calculatedDisplayPath = htmlPath.startsWith('/') ? htmlPath.substring(1) : htmlPath;
+                    
+                    
+                    let section = this.book.spine.get(calculatedDisplayPath);
+                    
+                    // 渲染时使用的路径：使用 manifest/spine 中的 href，如果找不到则使用计算出的不带斜杠路径
+                    const renderPath = section ? section.href : calculatedDisplayPath; 
+
+                    if (!section) {
+                         this.updateInfo('<span class="warning">⚠️ Spine未找到Section (' + calculatedDisplayPath + ')，尝试原始路径渲染。</span>');
+                    }
+                    
+                    const currentLocation = this.rendition.currentLocation();
+                    
+                    // 检查当前页面是否已经是目标页面，防止不必要的重绘
+                    if (currentLocation && currentLocation.start && currentLocation.start.href.includes(renderPath)) {
+                        this.updateInfo('页面已显示: ' + renderPath);
+                    } else {
+                        this.updateInfo('显示页面: ' + renderPath);
+                        
+                        // 使用 renderPath 进行显示 (不带 ID)
+                        await this.rendition.display(renderPath);
+                        
+                        // 给予浏览器/渲染器缓冲时间
+                        await new Promise(resolve => setTimeout(resolve, 500)); 
+                    }
+                    
+                    // V14 修正: 强制滚动到正确的位置。我们尝试使用 display 或 goTo。
+                    try {
+                        // V14 尝试 1: 使用 display 方法跳转到 ID 锚点 (如果页面已加载，这应该只触发滚动)
+                        await this.rendition.display(htmlPathWithId); 
+                        this.updateInfo(`✅ 滚动至片段 (Display): ${htmlPathWithId}`);
+                    } catch (e) {
+                         // V14 尝试 2: 如果 display 失败，尝试更直接的 location.goTo（如果它存在）
+                         if (this.rendition.location && typeof this.rendition.location.goTo === 'function') {
+                             this.rendition.location.goTo(htmlPathWithId);
+                             this.updateInfo(`✅ 滚动至片段 (goTo): ${htmlPathWithId}`);
+                         } else {
+                             // 忽略，在初次加载时经常失败
+                             console.warn("无法滚动到ID锚点:", e);
+                         }
+                    }
+
+
+                } catch (error) {
+                    console.error('显示页面失败:', error);
+                    this.updateInfo('<p class="error">❌ 显示页面失败: ' + error.message + '</p>');
+                    throw error; 
+                }
+            }
+
+            // --- 播放控制 ---
+            async play() {
+                if (this.queue.length === 0) return;
+
+                this.isPlaying = true;
+                this.updateStatus("▶️ 正在播放...");
+                
+                if (this.currentAudioFile) {
+                    try {
+                        await this.audioElement.play();
+                        this.updateStatus('▶️ 正在播放: ' + this.currentAudioFile);
+                    } catch (e) {
+                        this.updateStatus("⚠️ 重新启动播放流程...");
+                        await this.playByAudioFiles();
+                    }
+                } else {
+                    await this.playByAudioFiles();
+                }
+            }
+
+            pause() {
+                this.isPlaying = false;
+                this.audioElement.pause();
+                this.updateStatus("⏸️ 已暂停");
+            }
+
+            stop() {
+                this.isPlaying = false;
+                this.audioElement.pause();
+                this.audioElement.currentTime = 0;
+                this.highlightCurrentFragment(false);
+                this.currentIndex = -1;
+                this.currentAudioFile = null;
+                this.updateStatus("⏹️ 已停止");
+                this.updateFragmentId("N/A");
+                document.getElementById('progress-bar').style.width = '0%';
+                document.getElementById('time-display').textContent = '00:00 / 00:00';
+            }
+
+            async playByAudioFiles() {
+                if (this.audioGroups.size === 0) return;
+                
+                let currentGroupsArray = Array.from(this.audioGroups);
+                
+                let startIndex = 0;
+                if (this.currentAudioFile) {
+                    startIndex = currentGroupsArray.findIndex(([file, fragments]) => file === this.currentAudioFile);
+                    if (startIndex === -1) startIndex = 0;
+                }
+
+                for (let i = startIndex; i < currentGroupsArray.length; i++) {
+                    const [audioFile, fragments] = currentGroupsArray[i];
+                    
+                    if (!this.isPlaying) break;
+                    
+                    this.currentAudioFile = audioFile;
+                    this.updateInfo('<strong>开始播放音频: ' + audioFile + '</strong>');
+                    
+                    if (fragments.length > 0) {
+                        await this.displayFragmentPage(fragments[0]);
+                    }
+                    
+                    try {
+                        await this.playAudioFile(audioFile, fragments);
+                    } catch (error) {
+                        this.updateInfo(`<span class="error">⏩ 跳过文件 ${audioFile}，继续下一个音频组。</span>`);
+                        continue; 
+                    }
+                }
+                
+                if (this.isPlaying) {
+                    this.isPlaying = false;
+                    this.updateStatus("✅ 所有音频播放完成");
+                }
+                this.currentAudioFile = null;
+                this.currentIndex = -1;
+            }
+
+            // --- 播放单个音频文件 ---
+            async playAudioFile(audioFile, fragments) {
+                try {
+                    // audioFile here is the resolved absolute path (e.g., /Audio/00000-00001.mp4)
+                    if (this.audioElement.src.indexOf(audioFile) === -1 || !this.audioElement.src) {
+                        const audioUrl = await this.getAudioUrl(audioFile);
+                        this.audioElement.src = audioUrl;
+                        this.audioElement.currentTime = 0;
+                    }
+                    
+                    if (this.currentIndex >= 0) {
+                        this.highlightCurrentFragment(false, this.currentIndex);
+                    }
+                    this.currentIndex = -1;
+                    this.updateFragmentId("准备播放...");
+                    
+                    await this.audioElement.play();
+                    this.updateStatus('▶️ 正在播放: ' + audioFile);
+                    
+                    await new Promise((resolve) => {
+                        const onAudioEnd = () => {
+                            this.audioElement.removeEventListener('ended', onAudioEnd);
+                            resolve();
+                        };
+                        
+                        this.audioElement.addEventListener('ended', onAudioEnd);
+
+                        const checkState = setInterval(() => {
+                            if (!this.isPlaying || this.audioElement.ended) {
+                                clearInterval(checkState);
+                                this.audioElement.removeEventListener('ended', onAudioEnd);
+                                resolve();
+                            }
+                        }, 100);
+                    });
+                    
+                } catch (error) {
+                    console.error('播放音频失败: ' + audioFile, error);
+                    this.updateStatus('❌ 播放失败: ' + audioFile, 'error');
+                    this.updateInfo('<span class="error">播放失败详情: ' + error.message + '</span>');
+                    throw error; 
+                }
+            }
+
+            // --- 实时高亮系统 ---
+            updateCurrentHighlight() {
+                if (!this.isPlaying || !this.currentAudioFile) return;
+                
+                const currentTime = this.audioElement.currentTime;
+                this.updateProgressBar();
+                
+                const currentFragment = this.findFragmentByTime(currentTime);
+                
+                if (currentFragment && currentFragment.index !== this.currentIndex) {
+                    
+                    if (this.currentIndex >= 0) {
+                        this.highlightCurrentFragment(false, this.currentIndex);
+                    }
+                    
+                    this.currentIndex = currentFragment.index;
+                    
+                    const success = this.highlightCurrentFragment(true, this.currentIndex);
+                    this.updateFragmentId(currentFragment.fragmentId + (success ? '' : ' (找不到元素)'));
+                    
+                    if (success) {
+                        const fragment = this.queue[this.currentIndex];
+                        // 滚动到当前片段 (在页面已加载后，这个调用通常是安全的)
+                        if (this.rendition.location && typeof this.rendition.location.goTo === 'function') {
+                            this.rendition.location.goTo(fragment.textSrc);
+                        } else {
+                            // 备用方案，再次尝试 display
+                            this.rendition.display(fragment.textSrc);
+                        }
+                    }
+                }
+            }
+
+            findFragmentByTime(currentTime) {
+                const fragments = this.audioGroups.get(this.currentAudioFile) || [];
+                
+                for (let i = 0; i < fragments.length; i++) {
+                    const fragment = fragments[i];
+                    const startTime = this.timeToSeconds(fragment.clipBegin);
+                    const endTime = this.timeToSeconds(fragment.clipEnd);
+                    
+                    if (currentTime >= startTime && currentTime < endTime) {
+                        const textParts = fragment.textSrc.split('#');
+                        const fragmentId = textParts.length > 1 ? textParts[1] : 'fragment-' + i;
+                        return {
+                            index: fragment.originalIndex,
+                            fragmentId: fragmentId,
+                            startTime: startTime,
+                            endTime: endTime
+                        };
+                    }
+                }
+                return null;
+            }
+
+            highlightCurrentFragment(highlight, index = this.currentIndex) {
+                const fragment = this.queue[index];
+                if (!fragment) return false;
+                
+                const textParts = fragment.textSrc.split('#');
+                const fragmentId = textParts.length > 1 ? textParts[1] : null;
+                if (!fragmentId) return false;
+
+                try {
+                    let targetDoc = null;
+                    
+                    if (this.rendition && this.rendition.getContents) {
+                        const contents = this.rendition.getContents();
+                        if (contents && contents.length > 0) {
+                            targetDoc = contents[0].document;
+                        }
+                    }
+                    
+                    if (!targetDoc) return false;
+                    
+                    const targetEl = targetDoc.getElementById(fragmentId);
+                    
+                    if (targetEl) {
+                        targetEl.classList.toggle(this.activeClass, highlight);
+                        return true;
+                    }
+                    
+                    return false;
+                    
+                } catch (e) {
+                    console.warn("高亮失败，可能元素不在当前渲染页:", e);
+                    return false;
+                }
+            }
+
+            updateProgressBar() {
+                if (this.audioElement.duration) {
+                    const progress = (this.audioElement.currentTime / this.audioElement.duration) * 100;
+                    document.getElementById('progress-bar').style.width = progress + '%';
+                    
+                    const currentTime = this.formatTime(this.audioElement.currentTime);
+                    const totalTime = this.formatTime(this.audioElement.duration);
+                    document.getElementById('time-display').textContent = currentTime + ' / ' + totalTime;
+                }
+            }
+
+            seekForward() {
+                if (this.audioElement.duration) {
+                    this.audioElement.currentTime = Math.min(
+                        this.audioElement.currentTime + 10,
+                        this.audioElement.duration
+                    );
+                }
+            }
+
+            seekBackward() {
+                if (this.audioElement.duration) {
+                    this.audioElement.currentTime = Math.max(
+                        this.audioElement.currentTime - 10,
+                        0
+                    );
+                }
+            }
+
+            formatTime(seconds) {
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return mins.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0');
+            }
+
+            updateStatus(message, type = 'success') {
+                const statusEl = document.getElementById('player-status');
+                statusEl.innerHTML = '<span class="' + type + '">' + message + '</span>';
+            }
+
+            updateFragmentId(id) {
+                document.getElementById('current-fragment-id').textContent = id;
+            }
+
+            updateInfo(message) {
+                 this.infoOutput.innerHTML += '<p style="margin: 2px 0; font-size: 12px;">' + message + '</p>';
+            }
+        }
+        
+        // --- 文件加载函数 ---
+        async function loadEPUB() {
+            const fileInput = document.getElementById('epub-file');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('请选择EPUB文件');
+                return;
+            }
+
+            try {
+                document.getElementById('info-output').innerHTML = '<p>正在加载EPUB文件...</p>';
+                
+                book = ePub(file);
+                
+                // 添加 iframeSandbox 权限
+                rendition = book.renderTo("viewer", { 
+                    width: "100%", 
+                    height: "100%",
+                    flow: "scrolled-doc",
+                    iframeSandbox: 'allow-scripts allow-same-origin' 
+                });
+                
+                await book.opened;
+                
+                document.getElementById('info-output').innerHTML = '<p class="success">EPUB文件加载成功，正在解析媒体覆盖信息...</p>';
+                
+                player = new MediaOverlayPlayer(book, rendition, document.getElementById('info-output'));
+                await player.initialize();
+                
+                // 绑定控制事件
+                document.getElementById('play-pause-btn').onclick = () => {
+                    if (player && player.queue.length > 0) {
+                        if (player.isPlaying) {
+                            player.pause();
+                        } else {
+                            player.play();
+                        }
+                    } else {
+                        player.updateStatus("⚠️ 未加载有效的同步数据", 'warning');
+                    }
+                };
+                document.getElementById('stop-btn').onclick = () => player && player.stop();
+                document.getElementById('seek-back-btn').onclick = () => player && player.seekBackward();
+                document.getElementById('seek-forward-btn').onclick = () => player && player.seekForward();
+                
+            } catch (error) {
+                document.getElementById('info-output').innerHTML = '<p class="error">❌ 加载失败: ' + error.message + '</p>';
+                console.error("EPUB加载错误:", error);
+            }
+        }
+
+        // --- 初始化事件监听 ---
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('load-btn').addEventListener('click', loadEPUB);
+            
+            document.getElementById('epub-file').addEventListener('change', function() {
+                if (this.files.length > 0) {
+                    document.getElementById('load-btn').disabled = false;
+                }
+            });
+            document.getElementById('load-btn').disabled = true; 
+        });
+    </script>
+</body>
+</html>
